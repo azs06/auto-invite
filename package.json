@@ -1,0 +1,16 @@
+{
+  "name": "auto-invite",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240614.0",
+    "@vitest/coverage-v8": "^1.6.0",
+    "vitest": "^1.6.0",
+    "wrangler": "^3.60.0"
+  }
+}

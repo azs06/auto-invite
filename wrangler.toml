@@ -1,0 +1,10 @@
+name = "auto-invite"
+main = "src/worker.ts"
+compatibility_date = "2024-06-01"
+
+[durable_objects]
+bindings = [{ name = "AVAILABILITY", class_name = "AvailabilityRequest" }]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["AvailabilityRequest"]
