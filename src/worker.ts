@@ -1,6 +1,12 @@
 export interface Env {
   AVAILABILITY: DurableObjectNamespace;
   NOTIFY_WEBHOOK_URL?: string;
+  // Email configuration (Resend)
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
+  // Feature flags (disabled by default - set to "true" to enable)
+  EMAIL_INVITE_ENABLED?: string;
+  EMAIL_CONFIRM_ENABLED?: string;
 }
 
 type AllowedWindow = {
@@ -26,6 +32,15 @@ type SubmissionData = {
   guestTimezone: string;
   submittedAt: string;
   updatedAt?: string;
+};
+
+type ConfirmedSlot = {
+  startUtc: string;
+  endUtc: string;
+  title: string;
+  description: string;
+  location: string;
+  confirmedAt: string;
 };
 
 export default {
@@ -78,6 +93,10 @@ export default {
 
       if (extra === "export.ics" && request.method === "GET") {
         return proxyToDurableObject(stub, `/export.ics${url.search}`, request);
+      }
+
+      if (extra === "confirm" && request.method === "POST") {
+        return proxyToDurableObject(stub, `/confirm${url.search}`, request);
       }
 
       if (extra === "submit" && request.method === "POST") {
@@ -198,6 +217,7 @@ export class AvailabilityRequest {
         return jsonResponse({ error: "Request not found." }, 404);
       }
       const submission = await this.state.storage.get<SubmissionData>("submission");
+      const confirmed = await this.state.storage.get<ConfirmedSlot>("confirmed");
       const isAdmin = adminToken && adminToken === data.adminToken;
       return jsonResponse({
         id: data.id,
@@ -211,6 +231,7 @@ export class AvailabilityRequest {
         createdAt: data.createdAt,
         hasSubmission: Boolean(submission),
         isAdmin,
+        confirmedSlot: confirmed ?? null,
       });
     }
 
@@ -248,6 +269,59 @@ export class AvailabilityRequest {
           "Content-Disposition": `attachment; filename="availability-${data.guestName.replace(/[^a-z0-9]/gi, "-")}.ics"`,
         },
       });
+    }
+
+    if (pathname === "/confirm" && request.method === "POST") {
+      const data = await this.state.storage.get<RequestData>("request");
+      if (!data) {
+        return jsonResponse({ error: "Request not found." }, 404);
+      }
+      if (!adminToken || adminToken !== data.adminToken) {
+        return jsonResponse({ error: "Unauthorized." }, 403);
+      }
+      const body = await readJson<{
+        startUtc?: string;
+        endUtc?: string;
+        title?: string;
+        description?: string;
+        location?: string;
+      }>(request);
+      if (!body) {
+        return jsonResponse({ error: "Invalid JSON." }, 400);
+      }
+      if (!body.startUtc || !body.endUtc) {
+        return jsonResponse({ error: "Start and end times are required." }, 400);
+      }
+      const start = Date.parse(body.startUtc);
+      const end = Date.parse(body.endUtc);
+      if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
+        return jsonResponse({ error: "Start and end must be valid UTC times." }, 400);
+      }
+      const title = (body.title ?? "").trim() || `Meeting: ${data.hostName} + ${data.guestName}`;
+      const confirmed: ConfirmedSlot = {
+        startUtc: body.startUtc,
+        endUtc: body.endUtc,
+        title,
+        description: (body.description ?? "").trim(),
+        location: (body.location ?? "").trim(),
+        confirmedAt: new Date().toISOString(),
+      };
+      await this.state.storage.put("confirmed", confirmed);
+
+      // Send confirmation email with .ics to guest (non-blocking, if enabled)
+      if (this.env.EMAIL_CONFIRM_ENABLED === 'true') {
+        const submission = await this.state.storage.get<SubmissionData>('submission');
+        sendConfirmationEmail(this.env, {
+          requestId: data.id,
+          guestName: data.guestName,
+          guestEmail: data.guestEmail,
+          hostName: data.hostName,
+          guestTimezone: submission?.guestTimezone || 'UTC',
+          confirmed,
+        }).catch(() => undefined);
+      }
+
+      return jsonResponse({ ok: true });
     }
 
     if (pathname === "/submit" && request.method === "POST") {
@@ -382,6 +456,19 @@ async function handleCreateRequest(request: Request, env: Env, origin: string) {
 
   if (!response.ok) {
     return response;
+  }
+
+  // Send invite email to guest (non-blocking, if enabled)
+  if (env.EMAIL_INVITE_ENABLED === 'true') {
+    sendInviteEmail(env, {
+      hostName,
+      guestName,
+      guestEmail,
+      dateStart: allowedDateStart,
+      dateEnd: allowedDateEnd,
+      hostTimezone,
+      guestUrl: `${origin}/r/${id}`,
+    }).catch(() => undefined);
   }
 
   return jsonResponse({
@@ -568,6 +655,345 @@ async function notifyHost(env: Env, request: RequestData, submission: Submission
       submittedAt: submission.submittedAt,
       updatedAt: submission.updatedAt,
     }),
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Email Integration (Resend)
+// ─────────────────────────────────────────────────────────────────────────────
+
+type EmailAttachment = {
+  filename: string;
+  content: string; // base64 encoded
+  contentType?: string;
+};
+
+export async function sendEmail(env: Env, params: {
+  to: string;
+  subject: string;
+  html: string;
+  attachments?: EmailAttachment[];
+}): Promise<boolean> {
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return false;
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: env.EMAIL_FROM,
+      to: [params.to],
+      subject: params.subject,
+      html: params.html,
+      attachments: params.attachments?.map(a => ({
+        filename: a.filename,
+        content: a.content,
+        content_type: a.contentType,
+      })),
+    }),
+  });
+  return response.ok;
+}
+
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+export function formatDateRange(start: string, end: string, timezone: string): string {
+  const formatDate = (iso: string) => {
+    const date = new Date(iso + 'T00:00:00');
+    return date.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      timeZone: 'UTC',
+    });
+  };
+  return `${formatDate(start)} - ${formatDate(end)} (${timezone})`;
+}
+
+export function renderInviteEmail(params: {
+  hostName: string;
+  guestName: string;
+  dateRange: string;
+  guestUrl: string;
+}): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #0d1117; color: #c9d1d9;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #0d1117; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 500px; background-color: #161b22; border-radius: 12px; border: 1px solid #30363d;">
+          <tr>
+            <td style="padding: 32px;">
+              <p style="color: #d4a855; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 8px 0;">Auto Invite</p>
+              <h1 style="margin: 0 0 24px 0; color: #c9d1d9; font-size: 22px; font-weight: 600;">You're invited to share your availability</h1>
+
+              <p style="color: #8b949e; line-height: 1.6; margin: 0 0 20px 0;">
+                <strong style="color: #c9d1d9;">${escapeHtml(params.hostName)}</strong> would like to schedule a meeting with you.
+              </p>
+
+              <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #0d1117; border-radius: 8px; margin: 0 0 24px 0;">
+                <tr>
+                  <td style="padding: 16px;">
+                    <p style="margin: 0 0 4px 0; font-size: 12px; color: #8b949e; text-transform: uppercase;">Date Range</p>
+                    <p style="margin: 0; color: #c9d1d9;">${escapeHtml(params.dateRange)}</p>
+                  </td>
+                </tr>
+              </table>
+
+              <a href="${escapeHtml(params.guestUrl)}" style="display: block; background-color: #d4a855; color: #0d1117; text-decoration: none; padding: 14px 24px; border-radius: 8px; font-weight: 600; text-align: center;">
+                Select Your Available Times
+              </a>
+
+              <p style="color: #6e7681; font-size: 13px; line-height: 1.5; margin: 24px 0 0 0;">
+                Click the button above to open the scheduling page. Your timezone will be detected automatically.
+              </p>
+            </td>
+          </tr>
+        </table>
+        <p style="color: #6e7681; font-size: 12px; margin-top: 16px;">Sent via Auto Invite</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+export function renderConfirmationEmail(params: {
+  guestName: string;
+  hostName: string;
+  title: string;
+  startTime: string;
+  endTime: string;
+  location?: string;
+  description?: string;
+}): string {
+  const locationHtml = params.location
+    ? `<tr>
+        <td style="padding: 12px 16px; border-bottom: 1px solid #30363d;">
+          <p style="margin: 0 0 4px 0; font-size: 12px; color: #8b949e; text-transform: uppercase;">Location</p>
+          <p style="margin: 0; color: #c9d1d9;">${escapeHtml(params.location)}</p>
+        </td>
+      </tr>`
+    : '';
+
+  const descriptionHtml = params.description
+    ? `<tr>
+        <td style="padding: 12px 16px;">
+          <p style="margin: 0 0 4px 0; font-size: 12px; color: #8b949e; text-transform: uppercase;">Description</p>
+          <p style="margin: 0; color: #c9d1d9; white-space: pre-wrap;">${escapeHtml(params.description)}</p>
+        </td>
+      </tr>`
+    : '';
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #0d1117; color: #c9d1d9;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #0d1117; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 500px; background-color: #161b22; border-radius: 12px; border: 1px solid #30363d;">
+          <tr>
+            <td style="padding: 32px;">
+              <p style="color: #d4a855; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 8px 0;">Auto Invite</p>
+              <h1 style="margin: 0 0 24px 0; color: #c9d1d9; font-size: 22px; font-weight: 600;">Your meeting is confirmed!</h1>
+
+              <p style="color: #8b949e; line-height: 1.6; margin: 0 0 20px 0;">
+                <strong style="color: #c9d1d9;">${escapeHtml(params.hostName)}</strong> has confirmed your meeting time.
+              </p>
+
+              <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #0d1117; border-radius: 8px; margin: 0 0 24px 0; border: 1px solid #30363d;">
+                <tr>
+                  <td style="padding: 12px 16px; border-bottom: 1px solid #30363d;">
+                    <p style="margin: 0 0 4px 0; font-size: 12px; color: #8b949e; text-transform: uppercase;">Event</p>
+                    <p style="margin: 0; color: #c9d1d9; font-weight: 600;">${escapeHtml(params.title)}</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 12px 16px; border-bottom: 1px solid #30363d;">
+                    <p style="margin: 0 0 4px 0; font-size: 12px; color: #8b949e; text-transform: uppercase;">When</p>
+                    <p style="margin: 0; color: #c9d1d9;">${escapeHtml(params.startTime)}</p>
+                    <p style="margin: 4px 0 0 0; color: #8b949e; font-size: 13px;">to ${escapeHtml(params.endTime)}</p>
+                  </td>
+                </tr>
+                ${locationHtml}
+                ${descriptionHtml}
+              </table>
+
+              <p style="color: #8b949e; font-size: 14px; line-height: 1.5; margin: 0 0 8px 0;">
+                A calendar invite (.ics) is attached to this email. Open it to add the event to your calendar.
+              </p>
+            </td>
+          </tr>
+        </table>
+        <p style="color: #6e7681; font-size: 12px; margin-top: 16px;">Sent via Auto Invite</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+export function generateConfirmationICS(params: {
+  requestId: string;
+  title: string;
+  description: string;
+  location: string;
+  startUtc: string;
+  endUtc: string;
+  hostName: string;
+  guestName: string;
+  guestEmail: string;
+}): string {
+  const formatICSDate = (isoString: string) => {
+    return isoString.replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  };
+
+  const escapeICS = (text: string) => {
+    return text.replace(/[\\;,\n]/g, (match) => {
+      if (match === "\n") return "\\n";
+      return "\\" + match;
+    });
+  };
+
+  const uid = `${params.requestId}-confirmed@auto-invite`;
+  const dtstamp = formatICSDate(new Date().toISOString());
+  const dtstart = formatICSDate(params.startUtc);
+  const dtend = formatICSDate(params.endUtc);
+  const summary = escapeICS(params.title);
+  const description = escapeICS(
+    params.description ||
+    `Meeting confirmed via Auto Invite.\\nHost: ${params.hostName}\\nGuest: ${params.guestName}`
+  );
+
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Auto Invite//Meeting Confirmation//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:REQUEST",
+    "BEGIN:VEVENT",
+    `UID:${uid}`,
+    `DTSTAMP:${dtstamp}`,
+    `DTSTART:${dtstart}`,
+    `DTEND:${dtend}`,
+    `SUMMARY:${summary}`,
+    `DESCRIPTION:${description}`,
+  ];
+
+  if (params.location) {
+    lines.push(`LOCATION:${escapeICS(params.location)}`);
+  }
+
+  lines.push(
+    `ORGANIZER;CN=${escapeICS(params.hostName)}:mailto:noreply@auto-invite.app`,
+    `ATTENDEE;CN=${escapeICS(params.guestName)};RSVP=TRUE:mailto:${params.guestEmail}`,
+    "STATUS:CONFIRMED",
+    "END:VEVENT",
+    "END:VCALENDAR"
+  );
+
+  return lines.join("\r\n");
+}
+
+export function formatTimeForEmail(utcIso: string, timezone: string): string {
+  const date = new Date(utcIso);
+  return date.toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: timezone,
+    timeZoneName: 'short',
+  });
+}
+
+export async function sendInviteEmail(env: Env, params: {
+  hostName: string;
+  guestName: string;
+  guestEmail: string;
+  dateStart: string;
+  dateEnd: string;
+  hostTimezone: string;
+  guestUrl: string;
+}): Promise<boolean> {
+  const dateRange = formatDateRange(params.dateStart, params.dateEnd, params.hostTimezone);
+  const html = renderInviteEmail({
+    hostName: params.hostName,
+    guestName: params.guestName,
+    dateRange,
+    guestUrl: params.guestUrl,
+  });
+
+  return sendEmail(env, {
+    to: params.guestEmail,
+    subject: `${params.hostName} invited you to share your availability`,
+    html,
+  });
+}
+
+export async function sendConfirmationEmail(env: Env, params: {
+  requestId: string;
+  guestName: string;
+  guestEmail: string;
+  hostName: string;
+  guestTimezone: string;
+  confirmed: ConfirmedSlot;
+}): Promise<boolean> {
+  const startTime = formatTimeForEmail(params.confirmed.startUtc, params.guestTimezone);
+  const endTime = formatTimeForEmail(params.confirmed.endUtc, params.guestTimezone);
+
+  const html = renderConfirmationEmail({
+    guestName: params.guestName,
+    hostName: params.hostName,
+    title: params.confirmed.title,
+    startTime,
+    endTime,
+    location: params.confirmed.location || undefined,
+    description: params.confirmed.description || undefined,
+  });
+
+  const ics = generateConfirmationICS({
+    requestId: params.requestId,
+    title: params.confirmed.title,
+    description: params.confirmed.description,
+    location: params.confirmed.location,
+    startUtc: params.confirmed.startUtc,
+    endUtc: params.confirmed.endUtc,
+    hostName: params.hostName,
+    guestName: params.guestName,
+    guestEmail: params.guestEmail,
+  });
+
+  const icsBase64 = btoa(ics);
+
+  return sendEmail(env, {
+    to: params.guestEmail,
+    subject: `Confirmed: ${params.confirmed.title}`,
+    html,
+    attachments: [{
+      filename: 'meeting.ics',
+      content: icsBase64,
+      contentType: 'text/calendar',
+    }],
   });
 }
 
@@ -973,6 +1399,15 @@ function renderRequestPage() {
           <h2>Select Your Times</h2>
           <span id="guest-timezone" class="pill"></span>
         </div>
+        <section id="confirmed-guest" class="panel subtle hidden">
+          <div class="panel-header">
+            <h3>Meeting confirmed</h3>
+            <a id="confirmed-guest-link" class="button secondary" target="_blank" rel="noreferrer">
+              Add to Google Calendar
+            </a>
+          </div>
+          <div id="confirmed-guest-details" class="stack"></div>
+        </section>
         <p id="guest-intro" class="subhead"></p>
         <div id="timezone-offset" class="timezone-offset-card hidden">
           <div class="timezone-offset-icon">
@@ -1005,6 +1440,15 @@ function renderRequestPage() {
           <div id="best-times" class="best-times"></div>
           <div id="timeline-view" class="timeline-view"></div>
         </div>
+        <section id="confirmed-host" class="panel subtle hidden" style="margin-top: 1.5rem;">
+          <div class="panel-header">
+            <h3>Confirmed meeting</h3>
+            <a id="confirmed-host-link" class="button secondary" target="_blank" rel="noreferrer">
+              Add to Google Calendar
+            </a>
+          </div>
+          <div id="confirmed-host-details" class="stack"></div>
+        </section>
         <button id="export-ics" class="secondary hidden" style="margin-top: 1rem;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 0.5rem;">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -1013,6 +1457,27 @@ function renderRequestPage() {
           </svg>
           Export to Calendar (.ics)
         </button>
+        <div class="panel subtle" style="margin-top: 1.5rem;">
+          <div class="panel-header">
+            <h3>Calendar details</h3>
+            <span class="pill">Admin</span>
+          </div>
+          <div class="stack">
+            <label>
+              Meeting title
+              <input id="meeting-title" placeholder="Meeting with guest" />
+            </label>
+            <label>
+              Location or video link
+              <input id="meeting-location" placeholder="Zoom link or address" />
+            </label>
+            <label>
+              Notes
+              <textarea id="meeting-description" rows="3" placeholder="Optional agenda"></textarea>
+            </label>
+          </div>
+          <div id="confirm-status" class="message success hidden" style="margin-top: 1rem;"></div>
+        </div>
         <div class="panel subtle" style="margin-top: 2rem;">
           <div class="panel-header">
             <h3>Edit Request</h3>
@@ -1085,6 +1550,16 @@ function renderRequestPage() {
       const bestTimesContainer = document.getElementById("best-times");
       const timelineView = document.getElementById("timeline-view");
       const exportIcsButton = document.getElementById("export-ics");
+      const confirmedGuestSection = document.getElementById("confirmed-guest");
+      const confirmedGuestLink = document.getElementById("confirmed-guest-link");
+      const confirmedGuestDetails = document.getElementById("confirmed-guest-details");
+      const confirmedHostSection = document.getElementById("confirmed-host");
+      const confirmedHostLink = document.getElementById("confirmed-host-link");
+      const confirmedHostDetails = document.getElementById("confirmed-host-details");
+      const meetingTitle = document.getElementById("meeting-title");
+      const meetingLocation = document.getElementById("meeting-location");
+      const meetingDescription = document.getElementById("meeting-description");
+      const confirmStatus = document.getElementById("confirm-status");
       const dateList = document.getElementById("date-list");
       const submitButton = document.getElementById("submit-availability");
       const guestError = document.getElementById("guest-error");
@@ -1242,6 +1717,46 @@ function renderRequestPage() {
           return \`\${hostName} wants to know your availability on \${startDay}.\`;
         }
         return \`\${hostName} wants to know your availability from \${startDay} to \${endDay}.\`;
+      }
+
+      function toGoogleCalendarDate(isoString) {
+        return isoString.replace(/[-:]/g, "").replace(/\\.\\d{3}Z$/, "Z");
+      }
+
+      function buildGoogleCalendarUrl(slot) {
+        const params = new URLSearchParams({
+          action: "TEMPLATE",
+          text: slot.title,
+          dates: toGoogleCalendarDate(slot.startUtc) + "/" + toGoogleCalendarDate(slot.endUtc),
+          details: slot.description || "",
+          location: slot.location || "",
+        });
+        return "https://calendar.google.com/calendar/render?" + params.toString();
+      }
+
+      function renderConfirmedSlot(request, slot) {
+        if (!slot) {
+          confirmedGuestSection.classList.add("hidden");
+          confirmedHostSection.classList.add("hidden");
+          return;
+        }
+
+        const hostTime = formatRange(slot.startUtc, slot.endUtc, request.hostTimezone);
+        const guestTime = formatRange(slot.startUtc, slot.endUtc, guestTimezone);
+        const detailsHtml = \`
+          <div class="row"><strong>Title:</strong> \${slot.title}</div>
+          <div class="row"><strong>Host time:</strong> \${hostTime}</div>
+          <div class="row"><strong>Your time:</strong> \${guestTime}</div>
+          <div class="row"><strong>Location:</strong> \${slot.location || "Not set"}</div>
+          <div class="row"><strong>Notes:</strong> \${slot.description || "None"}</div>
+        \`;
+        const url = buildGoogleCalendarUrl(slot);
+        confirmedGuestDetails.innerHTML = detailsHtml;
+        confirmedGuestLink.href = url;
+        confirmedGuestSection.classList.remove("hidden");
+        confirmedHostDetails.innerHTML = detailsHtml;
+        confirmedHostLink.href = url;
+        confirmedHostSection.classList.remove("hidden");
       }
 
       function displayTimezoneOffset(hostTimezone, hostName) {
@@ -1438,6 +1953,46 @@ function renderRequestPage() {
         setTimeout(() => notificationBanner.classList.add("hidden"), 5000);
       }
 
+      function showConfirmStatus(message) {
+        confirmStatus.textContent = message;
+        confirmStatus.classList.remove("hidden");
+        setTimeout(() => confirmStatus.classList.add("hidden"), 4000);
+      }
+
+      async function confirmSlot(slot) {
+        if (!adminToken) return;
+        const payload = {
+          startUtc: slot.startUtc,
+          endUtc: slot.endUtc,
+          title: meetingTitle.value,
+          description: meetingDescription.value,
+          location: meetingLocation.value,
+        };
+
+        const response = await fetch(
+          "/api/request/" + requestId + "/confirm?admin=" + encodeURIComponent(adminToken),
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload),
+          }
+        );
+
+        if (!response.ok) {
+          showEditError("Unable to confirm this slot.");
+          return;
+        }
+
+        const updated = {
+          ...payload,
+          title: payload.title || "Meeting: " + currentRequest.hostName + " + " + currentRequest.guestName,
+          confirmedAt: new Date().toISOString(),
+        };
+        currentRequest.confirmedSlot = updated;
+        renderConfirmedSlot(currentRequest, updated);
+        showConfirmStatus("Meeting confirmed and ready to add to calendar.");
+      }
+
       function connectWebSocket() {
         if (!adminToken) return;
         const wsUrl = new URL("/ws/" + requestId, location.origin);
@@ -1524,6 +2079,10 @@ function renderRequestPage() {
           currentRequest = request;
           renderHostDetails(request);
           populateEditForm(request);
+          meetingTitle.value = request.confirmedSlot?.title || "Meeting: " + request.hostName + " + " + request.guestName;
+          meetingLocation.value = request.confirmedSlot?.location || "";
+          meetingDescription.value = request.confirmedSlot?.description || "";
+          renderConfirmedSlot(request, request.confirmedSlot);
           await loadSubmission(request);
           connectWebSocket();
         } else {
@@ -1539,6 +2098,7 @@ function renderRequestPage() {
           if (request.hasSubmission) {
             showGuestNotice("You already submitted availability. Submitting again will replace it.");
           }
+          renderConfirmedSlot(request, request.confirmedSlot);
           renderGuestSelection(request);
         }
       }
@@ -1583,7 +2143,12 @@ function renderRequestPage() {
               <p class="label">Guest time</p>
               <p>\${formatRange(entry.startUtc, entry.endUtc, submission.guestTimezone)}</p>
             </div>
+            <div class="stack">
+              <button class="secondary" type="button">Select slot</button>
+              <span class="hint">Creates a calendar link</span>
+            </div>
           \`;
+          row.querySelector("button").addEventListener("click", () => confirmSlot(entry));
           list.appendChild(row);
         });
         availabilityList.appendChild(list);
@@ -2182,11 +2747,29 @@ function sharedStyles() {
       transition: all 0.2s ease;
     }
 
+    textarea {
+      padding: 0.85rem 1rem;
+      border-radius: 0.75rem;
+      border: 1px solid var(--line);
+      font-family: inherit;
+      font-size: 1rem;
+      background: var(--bg-input);
+      color: var(--ink);
+      transition: all 0.2s ease;
+      resize: vertical;
+    }
+
     input::placeholder {
       color: var(--ink-muted);
     }
 
     input:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+
+    textarea:focus {
       outline: none;
       border-color: var(--accent);
       box-shadow: 0 0 0 3px var(--accent-soft);
@@ -2260,7 +2843,8 @@ function sharedStyles() {
       margin-top: 1rem;
     }
 
-    button {
+    button,
+    a.button {
       border: none;
       padding: 0.9rem 1.75rem;
       border-radius: 0.75rem;
@@ -2271,6 +2855,10 @@ function sharedStyles() {
       transition: all 0.25s ease;
       position: relative;
       overflow: hidden;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
     }
 
     button.primary {
@@ -2279,7 +2867,12 @@ function sharedStyles() {
       box-shadow: 0 4px 20px var(--accent-soft);
     }
 
-    button.primary:hover {
+    a.button.primary {
+      color: var(--bg);
+    }
+
+    button.primary:hover,
+    a.button.primary:hover {
       transform: translateY(-2px);
       box-shadow: 0 8px 30px var(--accent-glow);
     }
@@ -2294,7 +2887,14 @@ function sharedStyles() {
       border: 1px solid rgba(212, 168, 85, 0.3);
     }
 
-    button.secondary:hover {
+    a.button.secondary {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border: 1px solid rgba(212, 168, 85, 0.3);
+    }
+
+    button.secondary:hover,
+    a.button.secondary:hover {
       background: rgba(212, 168, 85, 0.25);
       border-color: var(--accent);
     }

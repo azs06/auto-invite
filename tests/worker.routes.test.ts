@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import worker, { type Env } from "../src/worker";
 import {
   buildRequestPayload,
@@ -23,6 +23,10 @@ function extractAdminToken(adminUrl: string) {
   const url = new URL(adminUrl);
   return url.searchParams.get("admin") || "";
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("worker routing and handlers", () => {
   it("redirects / to /new", async () => {
@@ -125,6 +129,67 @@ describe("worker routing and handlers", () => {
     expect(data.requestId).toBeTruthy();
     expect(data.guestUrl).toContain("/r/");
     expect(data.adminUrl).toContain("?admin=");
+  });
+
+  it("sends invite email when enabled", async () => {
+    const { env } = createEnv({
+      RESEND_API_KEY: "re_test_key",
+      EMAIL_FROM: "Test <test@example.com>",
+      EMAIL_INVITE_ENABLED: "true",
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ id: "email-123" }), { status: 200 })
+    );
+
+    const { response, data } = await createRequest(env);
+    expect(response.status).toBe(200);
+
+    // Find the email API call (not the DO call)
+    const emailCalls = fetchSpy.mock.calls.filter(
+      (call) => call[0] === "https://api.resend.com/emails"
+    );
+    expect(emailCalls.length).toBe(1);
+
+    const emailBody = JSON.parse(emailCalls[0][1]?.body as string);
+    expect(emailBody.to).toEqual(["guest@example.com"]);
+    expect(emailBody.subject).toContain("Host");
+    expect(emailBody.html).toContain(data.guestUrl);
+  });
+
+  it("does not send invite email when disabled", async () => {
+    const { env } = createEnv({
+      RESEND_API_KEY: "re_test_key",
+      EMAIL_FROM: "Test <test@example.com>",
+      EMAIL_INVITE_ENABLED: "false",
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ id: "email-123" }), { status: 200 })
+    );
+
+    await createRequest(env);
+
+    const emailCalls = fetchSpy.mock.calls.filter(
+      (call) => call[0] === "https://api.resend.com/emails"
+    );
+    expect(emailCalls.length).toBe(0);
+  });
+
+  it("continues request creation even if email fails", async () => {
+    const { env } = createEnv({
+      RESEND_API_KEY: "re_test_key",
+      EMAIL_FROM: "Test <test@example.com>",
+      EMAIL_INVITE_ENABLED: "true",
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      if (url === "https://api.resend.com/emails") {
+        throw new Error("Network error");
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    const { response, data } = await createRequest(env);
+    expect(response.status).toBe(200);
+    expect(data.requestId).toBeTruthy();
   });
 
   it("bubbles up durable object errors during create", async () => {
@@ -359,6 +424,42 @@ describe("worker routing and handlers", () => {
     );
     expect(exportResponse.status).toBe(200);
     expect(exportResponse.headers.get("content-type")).toContain("text/calendar");
+  });
+
+  it("confirms a slot for calendar integration", async () => {
+    const { env } = createEnv();
+    const { data } = await createRequest(env);
+    const requestId = data.requestId;
+    const adminToken = extractAdminToken(data.adminUrl);
+
+    const unauthorized = await worker.fetch(
+      jsonRequest(`${origin}/api/request/${requestId}/confirm`, "POST", {
+        startUtc: "2024-01-01T10:00:00Z",
+        endUtc: "2024-01-01T11:00:00Z",
+      }),
+      env
+    );
+    expect(unauthorized.status).toBe(403);
+
+    const response = await worker.fetch(
+      jsonRequest(`${origin}/api/request/${requestId}/confirm?admin=${adminToken}`, "POST", {
+        startUtc: "2024-01-01T10:00:00Z",
+        endUtc: "2024-01-01T11:00:00Z",
+        title: "Intro Call",
+        description: "Discuss project scope",
+        location: "https://meet.example.com",
+      }),
+      env
+    );
+    expect(response.status).toBe(200);
+
+    const requestResponse = await worker.fetch(
+      new Request(`${origin}/api/request/${requestId}?admin=${adminToken}`),
+      env
+    );
+    const requestData = await requestResponse.json();
+    expect(requestData.confirmedSlot.title).toBe("Intro Call");
+    expect(requestData.confirmedSlot.location).toBe("https://meet.example.com");
   });
 
   it("returns 404 for unknown API extras", async () => {

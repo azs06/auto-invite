@@ -197,6 +197,196 @@ describe("AvailabilityRequest durable object", () => {
     expect(updatedData.updatedAt).toBeTruthy();
   });
 
+  it("confirms a slot for calendar integration", async () => {
+    const { namespace } = createEnv();
+    const obj = namespace.getObject("req-1");
+
+    const missingRequest = await obj.fetch(
+      jsonRequest(`${origin}/confirm`, "POST", {
+        startUtc: "2024-01-01T10:00:00Z",
+        endUtc: "2024-01-01T11:00:00Z",
+      })
+    );
+    expect(missingRequest.status).toBe(404);
+
+    const requestData = buildRequestData();
+    await obj.fetch(jsonRequest(`${origin}/request`, "POST", requestData));
+
+    const unauthorized = await obj.fetch(
+      jsonRequest(`${origin}/confirm?admin=bad`, "POST", {
+        startUtc: "2024-01-01T10:00:00Z",
+        endUtc: "2024-01-01T11:00:00Z",
+      })
+    );
+    expect(unauthorized.status).toBe(403);
+
+    const invalidJson = await obj.fetch(
+      invalidJsonRequest(`${origin}/confirm?admin=${requestData.adminToken}`, "POST")
+    );
+    expect(invalidJson.status).toBe(400);
+
+    const missingTimes = await obj.fetch(
+      jsonRequest(`${origin}/confirm?admin=${requestData.adminToken}`, "POST", {})
+    );
+    expect(missingTimes.status).toBe(400);
+
+    const invalidTimes = await obj.fetch(
+      jsonRequest(`${origin}/confirm?admin=${requestData.adminToken}`, "POST", {
+        startUtc: "2024-01-01T10:00:00Z",
+        endUtc: "2024-01-01T09:00:00Z",
+      })
+    );
+    expect(invalidTimes.status).toBe(400);
+
+    const defaultConfirm = await obj.fetch(
+      jsonRequest(`${origin}/confirm?admin=${requestData.adminToken}`, "POST", {
+        startUtc: "2024-01-01T10:00:00Z",
+        endUtc: "2024-01-01T11:00:00Z",
+      })
+    );
+    expect(defaultConfirm.status).toBe(200);
+
+    const defaultRequest = await obj.fetch(
+      new Request(`${origin}/request?admin=${requestData.adminToken}`)
+    );
+    const defaultJson = await defaultRequest.json();
+    expect(defaultJson.confirmedSlot.title).toContain(requestData.hostName);
+
+    const confirmed = await obj.fetch(
+      jsonRequest(`${origin}/confirm?admin=${requestData.adminToken}`, "POST", {
+        startUtc: "2024-01-01T10:00:00Z",
+        endUtc: "2024-01-01T11:00:00Z",
+        title: "Kickoff Call",
+        description: "Agenda",
+        location: "Zoom",
+      })
+    );
+    expect(confirmed.status).toBe(200);
+
+    const requestResponse = await obj.fetch(
+      new Request(`${origin}/request?admin=${requestData.adminToken}`)
+    );
+    const requestJson = await requestResponse.json();
+    expect(requestJson.confirmedSlot.title).toBe("Kickoff Call");
+    expect(requestJson.confirmedSlot.location).toBe("Zoom");
+  });
+
+  it("sends confirmation email when enabled", async () => {
+    const { namespace } = createEnv({
+      RESEND_API_KEY: "re_test_key",
+      EMAIL_FROM: "Test <test@example.com>",
+      EMAIL_CONFIRM_ENABLED: "true",
+    });
+    const obj = namespace.getObject("req-email");
+    const requestData = buildRequestData();
+    await obj.fetch(jsonRequest(`${origin}/request`, "POST", requestData));
+    await obj.fetch(jsonRequest(`${origin}/submit`, "POST", buildSubmission()));
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ id: "email-123" }), { status: 200 })
+    );
+
+    const confirmed = await obj.fetch(
+      jsonRequest(`${origin}/confirm?admin=${requestData.adminToken}`, "POST", {
+        startUtc: "2024-01-01T10:00:00Z",
+        endUtc: "2024-01-01T11:00:00Z",
+        title: "Team Meeting",
+        location: "Zoom",
+      })
+    );
+    expect(confirmed.status).toBe(200);
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const emailBody = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    expect(emailBody.to).toEqual(["guest@example.com"]);
+    expect(emailBody.subject).toBe("Confirmed: Team Meeting");
+    expect(emailBody.attachments).toHaveLength(1);
+    expect(emailBody.attachments[0].filename).toBe("meeting.ics");
+  });
+
+  it("does not send confirmation email when disabled", async () => {
+    const { namespace } = createEnv({
+      RESEND_API_KEY: "re_test_key",
+      EMAIL_FROM: "Test <test@example.com>",
+      EMAIL_CONFIRM_ENABLED: "false",
+    });
+    const obj = namespace.getObject("req-no-email");
+    const requestData = buildRequestData();
+    await obj.fetch(jsonRequest(`${origin}/request`, "POST", requestData));
+    await obj.fetch(jsonRequest(`${origin}/submit`, "POST", buildSubmission()));
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ id: "email-123" }), { status: 200 })
+    );
+
+    const confirmed = await obj.fetch(
+      jsonRequest(`${origin}/confirm?admin=${requestData.adminToken}`, "POST", {
+        startUtc: "2024-01-01T10:00:00Z",
+        endUtc: "2024-01-01T11:00:00Z",
+      })
+    );
+    expect(confirmed.status).toBe(200);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("uses UTC when guest timezone is not available for confirmation email", async () => {
+    const { namespace } = createEnv({
+      RESEND_API_KEY: "re_test_key",
+      EMAIL_FROM: "Test <test@example.com>",
+      EMAIL_CONFIRM_ENABLED: "true",
+    });
+    const obj = namespace.getObject("req-no-sub");
+    const requestData = buildRequestData();
+    await obj.fetch(jsonRequest(`${origin}/request`, "POST", requestData));
+    // No submission - so no guest timezone
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ id: "email-123" }), { status: 200 })
+    );
+
+    const confirmed = await obj.fetch(
+      jsonRequest(`${origin}/confirm?admin=${requestData.adminToken}`, "POST", {
+        startUtc: "2024-01-01T10:00:00Z",
+        endUtc: "2024-01-01T11:00:00Z",
+      })
+    );
+    expect(confirmed.status).toBe(200);
+
+    // Email should still be sent, using UTC as fallback
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const emailBody = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    expect(emailBody.html).toContain("UTC");
+  });
+
+  it("continues confirmation even if email fails", async () => {
+    const { namespace } = createEnv({
+      RESEND_API_KEY: "re_test_key",
+      EMAIL_FROM: "Test <test@example.com>",
+      EMAIL_CONFIRM_ENABLED: "true",
+    });
+    const obj = namespace.getObject("req-fail-email");
+    const requestData = buildRequestData();
+    await obj.fetch(jsonRequest(`${origin}/request`, "POST", requestData));
+    await obj.fetch(jsonRequest(`${origin}/submit`, "POST", buildSubmission()));
+
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Network error"));
+
+    const confirmed = await obj.fetch(
+      jsonRequest(`${origin}/confirm?admin=${requestData.adminToken}`, "POST", {
+        startUtc: "2024-01-01T10:00:00Z",
+        endUtc: "2024-01-01T11:00:00Z",
+      })
+    );
+    expect(confirmed.status).toBe(200);
+
+    // Verify the slot was still saved
+    const requestResponse = await obj.fetch(
+      new Request(`${origin}/request?admin=${requestData.adminToken}`)
+    );
+    const requestJson = await requestResponse.json();
+    expect(requestJson.confirmedSlot).toBeTruthy();
+  });
+
   it("exports ICS data and validates access", async () => {
     const { namespace } = createEnv();
     const obj = namespace.getObject("req-1");

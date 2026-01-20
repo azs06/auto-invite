@@ -67,6 +67,10 @@ export class MockDurableObjectNamespace {
 export function createEnv(overrides?: Partial<Env>) {
   const env = {
     NOTIFY_WEBHOOK_URL: overrides?.NOTIFY_WEBHOOK_URL,
+    RESEND_API_KEY: overrides?.RESEND_API_KEY,
+    EMAIL_FROM: overrides?.EMAIL_FROM,
+    EMAIL_INVITE_ENABLED: overrides?.EMAIL_INVITE_ENABLED,
+    EMAIL_CONFIRM_ENABLED: overrides?.EMAIL_CONFIRM_ENABLED,
   } as Env;
   const namespace = new MockDurableObjectNamespace(env);
   env.AVAILABILITY = namespace as unknown as DurableObjectNamespace;

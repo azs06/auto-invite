@@ -8,3 +8,16 @@ bindings = [{ name = "AVAILABILITY", class_name = "AvailabilityRequest" }]
 [[migrations]]
 tag = "v1"
 new_classes = ["AvailabilityRequest"]
+
+# Email Configuration (Resend)
+# Set these via wrangler secrets:
+#   wrangler secret put RESEND_API_KEY
+#   wrangler secret put EMAIL_FROM          # e.g., "Auto Invite <noreply@yourdomain.com>"
+#   wrangler secret put EMAIL_INVITE_ENABLED   # set to "true" to enable
+#   wrangler secret put EMAIL_CONFIRM_ENABLED  # set to "true" to enable
+#
+# For local development, create .dev.vars:
+#   RESEND_API_KEY=re_xxxx
+#   EMAIL_FROM=Auto Invite <noreply@yourdomain.com>
+#   EMAIL_INVITE_ENABLED=true
+#   EMAIL_CONFIRM_ENABLED=true

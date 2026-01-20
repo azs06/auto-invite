@@ -25,8 +25,9 @@
 ## Routing & Data Notes
 - Pages: `/new` (host form), `/r/:id` (guest), `/r/:id?admin=...` (host admin).
 - API: `POST /api/request`, `GET|PUT|DELETE /api/request/:id`, `POST /api/request/:id/submit`, `GET /api/request/:id/availability`, `GET /api/request/:id/export.ics`.
+- Calendar confirm: `POST /api/request/:id/confirm` (admin only) stores the chosen slot and calendar details.
 - WebSocket: `/ws/:id?admin=...` for admin submission notifications.
-- Durable Object storage keys: `"request"` (RequestData), `"submission"` (SubmissionData).
+- Durable Object storage keys: `"request"` (RequestData), `"submission"` (SubmissionData), `"confirmed"` (ConfirmedSlot).
 
 ## Testing Guidelines
 - Framework: Vitest.
