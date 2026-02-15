@@ -1,4 +1,4 @@
-# Auto Invite (Cloudflare Workers)
+# Auto Invite
 
 Collect guest availability across timezones. Hosts create booking requests with date/time constraints, guests pick a slot, and hosts review everything from an admin dashboard.
 
