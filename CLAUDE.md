@@ -18,30 +18,57 @@ Start at `http://localhost:8787/new` for the host form.
 
 ## Architecture
 
-**Single-file monolith**: Everything lives in `src/worker.ts`:
-- Worker fetch handler (routes requests)
-- `AvailabilityRequest` Durable Object class (state management)
-- API handlers for create/update/delete/submit
-- HTML page renderers with inline CSS and JavaScript
+**Modular structure** — the codebase is split into focused ES modules:
+
+```
+src/
+  worker.ts              — Fetch handler + routing (entrypoint), re-exports DO
+  durable-object.ts      — AvailabilityRequest class (state management)
+  handlers.ts            — handleCreateRequest, handleSubmitAvailability
+  types.ts               — All type/interface definitions
+  utils.ts               — Time, crypto, calendar, webhook, response helpers
+  email.ts               — Email templates and send wrappers (Resend)
+  pages/
+    group-booking.ts     — renderGroupBookingPage() (guest slot booking + admin dashboard)
+    new-group.ts         — renderNewGroupPage() (create group booking form)
+    new.ts               — renderNewPage() (create individual request form)
+    request.ts           — renderRequestPage() (guest availability + host admin)
+    shared-styles.ts     — sharedStyles() (shared CSS)
+```
 
 **Routing pattern**:
-- `/new` - Host creates a new request
+- `/new` - Host creates a new individual request
+- `/new/group` - Host creates a group booking
 - `/r/<token>` - Guest views and submits availability
 - `/r/<token>?admin=<adminToken>` - Host admin view
+- `/g/<token>` - Guest books a group slot
+- `/g/<token>?admin=<adminToken>` - Group admin dashboard
 - `/api/request` - POST creates request, returns guest/admin URLs
 - `/api/request/:id` - GET/PUT/DELETE for request data
 - `/api/request/:id/submit` - POST guest availability
 - `/api/request/:id/availability` - GET submission (admin only)
+- `/api/request/:id/slots` - GET group slots
+- `/api/request/:id/book` - POST/DELETE group bookings
+- `/api/request/:id/bookings` - GET all bookings (admin only)
+- `/api/request/:id/confirm` - POST confirm a meeting slot
+- `/api/request/:id/export.ics` - GET calendar export (admin only)
+- `/ws/:id?admin=<token>` - WebSocket for real-time admin notifications
 
 **Durable Object storage keys**:
 - `"request"` - `RequestData` (host settings, tokens, constraints)
 - `"submission"` - `SubmissionData` (guest availability ranges in UTC)
+- `"confirmed"` - `ConfirmedSlot` (confirmed meeting details)
+- `"bookings"` - `GroupBookingsData` (group booking entries)
 
 **Timezone handling**: Host defines constraints in host timezone. System converts to guest's detected timezone for display. All storage uses UTC. Guest timezone is auto-detected via `Intl.DateTimeFormat().resolvedOptions().timeZone`.
 
 ## Environment Variables
 
 - `NOTIFY_WEBHOOK_URL` (optional) - Webhook URL for POST notification when guest submits
+- `RESEND_API_KEY` (optional) - Resend API key for email integration
+- `EMAIL_FROM` (optional) - Sender email address
+- `EMAIL_INVITE_ENABLED` (optional) - Set to `"true"` to send invite emails to guests
+- `EMAIL_CONFIRM_ENABLED` (optional) - Set to `"true"` to send confirmation emails with .ics
 
 ## Code Style
 
