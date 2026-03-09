@@ -106,9 +106,18 @@ function getTimeZoneOffsetServer(timeZone: string, date: Date): number {
 function zonedTimeToUtcServer(dateStr: string, timeStr: string, timeZone: string): Date {
   const [year, month, day] = dateStr.split("-").map(Number);
   const [hour, minute] = timeStr.split(":").map(Number);
-  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute));
-  const offset = getTimeZoneOffsetServer(timeZone, utcGuess);
-  return new Date(utcGuess.getTime() - offset * 60000);
+  const localWallMs = Date.UTC(year, month - 1, day, hour, minute);
+
+  // Iteratively refine to handle DST gaps/overlaps correctly.
+  // A single-pass guess can be off by 1h around transitions.
+  let utc = new Date(localWallMs);
+  for (let i = 0; i < 5; i++) {
+    const offset = getTimeZoneOffsetServer(timeZone, utc);
+    const candidate = new Date(localWallMs - offset * 60000);
+    if (candidate.getTime() === utc.getTime()) break;
+    utc = candidate;
+  }
+  return utc;
 }
 
 export function generateSlots(data: GroupEventRequestData): GeneratedSlot[] {

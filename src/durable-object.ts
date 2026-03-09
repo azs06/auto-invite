@@ -824,10 +824,15 @@ export class AvailabilityRequest {
           const startInHostTz = utcToTimezone(range.startUtc, data.hostTimezone);
           const endInHostTz = utcToTimezone(range.endUtc, data.hostTimezone);
 
-          // Check if the date is within allowed date range
+          // Check if start and end dates are within allowed date range
           if (startInHostTz.date < data.allowedDateStart || startInHostTz.date > data.allowedDateEnd) {
-            return jsonResponse({ 
-              error: `Availability must fall within allowed date range (${data.allowedDateStart} to ${data.allowedDateEnd}).` 
+            return jsonResponse({
+              error: `Availability must fall within allowed date range (${data.allowedDateStart} to ${data.allowedDateEnd}).`
+            }, 400);
+          }
+          if (endInHostTz.date < data.allowedDateStart || endInHostTz.date > data.allowedDateEnd) {
+            return jsonResponse({
+              error: `Availability must fall within allowed date range (${data.allowedDateStart} to ${data.allowedDateEnd}).`
             }, 400);
           }
 
@@ -973,8 +978,8 @@ export class AvailabilityRequest {
 
         return jsonResponse({
           slots: filteredSlots,
-          totalGuests: aggregated.totalGuests,
-          submittedCount: aggregated.submittedCount,
+          totalGuests: guests.length,
+          submittedCount: submissions.length,
           maxParticipation: aggregated.maxParticipation,
           guestStatus,
         });

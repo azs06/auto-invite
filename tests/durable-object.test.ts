@@ -1349,7 +1349,7 @@ describe("Group availability aggregated endpoint", () => {
 
     const data = await response.json();
     expect(data.slots).toEqual([]);
-    expect(data.totalGuests).toBe(0);
+    expect(data.totalGuests).toBe(3);
     expect(data.submittedCount).toBe(0);
     expect(data.maxParticipation).toBe(0);
     expect(data.guestStatus).toHaveLength(3);
@@ -1388,7 +1388,7 @@ describe("Group availability aggregated endpoint", () => {
     expect(response.status).toBe(200);
 
     const data = await response.json();
-    expect(data.totalGuests).toBe(2);
+    expect(data.totalGuests).toBe(3);
     expect(data.submittedCount).toBe(2);
     expect(data.maxParticipation).toBeGreaterThan(0);
     expect(data.slots.length).toBeGreaterThan(0);

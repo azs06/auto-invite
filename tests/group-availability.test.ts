@@ -376,8 +376,8 @@ describe("group availability: aggregated view", () => {
     );
     expect(response.status).toBe(200);
     const result = await response.json();
-    // totalGuests from aggregateAvailability counts submitted guests only
-    expect(result.totalGuests).toBe(2);
+    // totalGuests = all invited guests; submittedCount = those who submitted
+    expect(result.totalGuests).toBe(3);
     expect(result.submittedCount).toBe(2);
     expect(result.guestStatus).toHaveLength(3);
     expect(result.slots.length).toBeGreaterThan(0);
@@ -730,8 +730,8 @@ describe("group availability: end-to-end flow", () => {
     );
     expect(aggResponse.status).toBe(200);
     const aggData = await aggResponse.json();
-    // totalGuests from aggregateAvailability counts submitted guests only
-    expect(aggData.totalGuests).toBe(3);
+    // totalGuests = all invited guests; submittedCount = those who submitted
+    expect(aggData.totalGuests).toBe(5);
     expect(aggData.submittedCount).toBe(3);
     expect(aggData.guestStatus.filter((g: { status: string }) => g.status === "submitted")).toHaveLength(3);
     expect(aggData.guestStatus.filter((g: { status: string }) => g.status === "pending")).toHaveLength(2);

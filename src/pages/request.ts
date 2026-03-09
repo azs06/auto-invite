@@ -789,10 +789,20 @@ export function renderRequestPage() {
         const confirmedEl = document.getElementById("group-confirmed-host");
         const detailsEl = document.getElementById("group-confirmed-host-details");
         const hostTime = formatRange(payload.startUtc, payload.endUtc, groupRequestData.hostTimezone);
-        detailsEl.innerHTML =
-          '<div class="row"><strong>Title:</strong> ' + (payload.title || "Untitled") + '</div>' +
-          '<div class="row"><strong>Time:</strong> ' + hostTime + '</div>' +
-          '<div class="row"><strong>Location:</strong> ' + (payload.location || "Not set") + '</div>';
+        detailsEl.textContent = "";
+        [
+          ["Title:", payload.title || "Untitled"],
+          ["Time:", hostTime],
+          ["Location:", payload.location || "Not set"],
+        ].forEach(([label, value]) => {
+          const row = document.createElement("div");
+          row.className = "row";
+          const strong = document.createElement("strong");
+          strong.textContent = label;
+          row.appendChild(strong);
+          row.appendChild(document.createTextNode(" " + value));
+          detailsEl.appendChild(row);
+        });
         confirmedEl.classList.remove("hidden");
         document.getElementById("group-confirm-section").classList.add("hidden");
       }

@@ -52,9 +52,8 @@ describe('Timezone Utilities - DST Awareness', () => {
       // 3:00 AM EDT (after DST) - the conversion uses the actual offset at that time
       const afterDst = timezoneToUtc('2024-03-10', '03:00', 'America/New_York');
       const afterDate = new Date(afterDst);
-      // 3:00 AM on March 10 in New York is actually in EDT (UTC-4), so it's 7:00 UTC
-      // But the Intl API might interpret this differently
-      expect(afterDate.getUTCHours()).toBe(8);
+      // 3:00 AM on March 10 in New York is in EDT (UTC-4), so it's 7:00 UTC
+      expect(afterDate.getUTCHours()).toBe(7);
     });
 
     it('should handle DST transitions correctly - fall back', () => {
@@ -68,8 +67,7 @@ describe('Timezone Utilities - DST Awareness', () => {
       const afterFallBack = timezoneToUtc('2024-11-03', '03:00', 'America/New_York');
       const afterDate = new Date(afterFallBack);
       // After the fall back, EST is UTC-5, so 3:00 AM EST is 8:00 UTC
-      // But the Intl API interprets based on the date
-      expect(afterDate.getUTCHours()).toBe(7);
+      expect(afterDate.getUTCHours()).toBe(8);
     });
   });
 
