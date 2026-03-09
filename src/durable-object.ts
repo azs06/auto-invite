@@ -1,4 +1,5 @@
-import type { Env, AllowedWindow, RequestData, SubmissionData, ConfirmedSlot, GroupBooking, GroupBookingsData, GroupSubmissionsData, GuestSubmission, AggregatedAvailability } from "./types";
+import type { Env, AllowedWindow, RequestData, IndividualRequestData, GroupAvailabilityRequestData, SubmissionData, ConfirmedSlot, GroupBooking, GroupBookingsData, GroupSubmissionsData, GuestSubmission, AggregatedAvailability } from "./types";
+import { EMAIL_REGEX, isGroupAvailabilityRequest, isIndividualRequest } from "./types";
 import { readJson, jsonResponse, normalizeTimeWindows, validateTimeWindows, isDateString, generateSlots, randomToken, generateICS, generateGroupICS, notifyHost, isValidTimezone, utcToTimezone, timeToMinutes, aggregateAvailability, escapeHtml } from "./utils";
 import { sendConfirmationEmail, sendGroupGuestSubmissionNotification } from "./email";
 
@@ -40,24 +41,23 @@ export class AvailabilityRequest {
         if (!adminToken || adminToken !== data.adminToken) {
           return jsonResponse({ error: "Unauthorized." }, 403);
         }
-        const body = await readJson<Partial<RequestData>>(request);
+        const body = await readJson<Record<string, unknown>>(request);
         if (!body) {
           return jsonResponse({ error: "Invalid JSON." }, 400);
         }
 
         // ── Group-availability: edit guest list, date range, time windows ──
         if (data.type === "group-availability") {
-          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
           const errors: string[] = [];
 
-          const hostName = escapeHtml(((body.hostName ?? data.hostName) as string).trim());
-          const hostTimezone = ((body.hostTimezone ?? data.hostTimezone) as string).trim();
-          const allowedDateStart = ((body.allowedDateStart ?? data.allowedDateStart) as string).trim();
-          const allowedDateEnd = ((body.allowedDateEnd ?? data.allowedDateEnd) as string).trim();
+          const hostName = escapeHtml(((body.hostName as string | undefined) ?? data.hostName).trim());
+          const hostTimezone = ((body.hostTimezone as string | undefined) ?? data.hostTimezone).trim();
+          const allowedDateStart = ((body.allowedDateStart as string | undefined) ?? data.allowedDateStart).trim();
+          const allowedDateEnd = ((body.allowedDateEnd as string | undefined) ?? data.allowedDateEnd).trim();
           const allowedTimeWindows = normalizeTimeWindows(
             (body.allowedTimeWindows as AllowedWindow[] | undefined) ?? data.allowedTimeWindows
           );
-          const guests = (body.guests ?? data.guests) as import("./types").GuestInfo[] | undefined;
+          const guests = (body.guests as import("./types").GuestInfo[] | undefined) ?? data.guests;
 
           if (!hostName) errors.push("Host name is required.");
           if (!hostTimezone) errors.push("Host timezone is required.");
@@ -91,7 +91,7 @@ export class AvailabilityRequest {
                 break;
               }
               const email = (guest.email ?? "").trim().toLowerCase();
-              if (!emailRegex.test(email)) {
+              if (!EMAIL_REGEX.test(email)) {
                 errors.push(`Invalid email format: ${guest.email}`);
                 break;
               }
@@ -111,14 +111,14 @@ export class AvailabilityRequest {
           const submissionsData = await this.state.storage.get<GroupSubmissionsData>("group-submissions");
           const hasSubmissions = (submissionsData?.submissions?.length ?? 0) > 0;
 
-          const updated: RequestData = {
+          const updated: GroupAvailabilityRequestData = {
             ...data,
             hostName,
             hostTimezone,
             allowedDateStart,
             allowedDateEnd,
             allowedTimeWindows,
-            guests: (guests as import("./types").GuestInfo[]).map((g) => ({
+            guests: guests.map((g) => ({
               ...g,
               name: escapeHtml(g.name.trim()),
             })),
@@ -134,38 +134,42 @@ export class AvailabilityRequest {
         }
 
         // ── Legacy individual / group-event update ──
-        const updated: RequestData = {
-          ...data,
-          hostName: (body.hostName ?? data.hostName ?? "").trim(),
-          guestName: (body.guestName ?? data.guestName ?? "").trim(),
-          guestEmail: (body.guestEmail ?? data.guestEmail ?? "").trim(),
-          hostTimezone: (body.hostTimezone ?? data.hostTimezone).trim(),
-          allowedDateStart: (body.allowedDateStart ?? data.allowedDateStart).trim(),
-          allowedDateEnd: (body.allowedDateEnd ?? data.allowedDateEnd).trim(),
-          allowedTimeWindows: normalizeTimeWindows(
-            (body.allowedTimeWindows as AllowedWindow[] | undefined) ?? data.allowedTimeWindows
-          ),
-        };
+        if (isIndividualRequest(data)) {
+          const updated: IndividualRequestData = {
+            ...data,
+            hostName: ((body.hostName as string | undefined) ?? data.hostName ?? "").trim(),
+            guestName: ((body.guestName as string | undefined) ?? data.guestName ?? "").trim(),
+            guestEmail: ((body.guestEmail as string | undefined) ?? data.guestEmail ?? "").trim(),
+            hostTimezone: ((body.hostTimezone as string | undefined) ?? data.hostTimezone).trim(),
+            allowedDateStart: ((body.allowedDateStart as string | undefined) ?? data.allowedDateStart).trim(),
+            allowedDateEnd: ((body.allowedDateEnd as string | undefined) ?? data.allowedDateEnd).trim(),
+            allowedTimeWindows: normalizeTimeWindows(
+              (body.allowedTimeWindows as AllowedWindow[] | undefined) ?? data.allowedTimeWindows
+            ),
+          };
 
-        const errors: string[] = [];
-        if (!updated.hostName) errors.push("Your name is required.");
-        if (!updated.guestName) errors.push("Guest name is required.");
-        if (!updated.guestEmail) errors.push("Guest email is required.");
-        if (!updated.hostTimezone) errors.push("Host timezone is required.");
-        if (!isDateString(updated.allowedDateStart)) errors.push("Valid start date is required.");
-        if (!isDateString(updated.allowedDateEnd)) errors.push("Valid end date is required.");
-        if (updated.allowedDateStart && updated.allowedDateEnd && updated.allowedDateStart > updated.allowedDateEnd) {
-          errors.push("Start date must be on or before end date.");
-        }
-        if (!validateTimeWindows(updated.allowedTimeWindows)) {
-          errors.push("Time windows must be valid and ordered.");
-        }
-        if (errors.length) {
-          return jsonResponse({ error: errors.join(" ") }, 400);
+          const errors: string[] = [];
+          if (!updated.hostName) errors.push("Your name is required.");
+          if (!updated.guestName) errors.push("Guest name is required.");
+          if (!updated.guestEmail) errors.push("Guest email is required.");
+          if (!updated.hostTimezone) errors.push("Host timezone is required.");
+          if (!isDateString(updated.allowedDateStart)) errors.push("Valid start date is required.");
+          if (!isDateString(updated.allowedDateEnd)) errors.push("Valid end date is required.");
+          if (updated.allowedDateStart && updated.allowedDateEnd && updated.allowedDateStart > updated.allowedDateEnd) {
+            errors.push("Start date must be on or before end date.");
+          }
+          if (!validateTimeWindows(updated.allowedTimeWindows)) {
+            errors.push("Time windows must be valid and ordered.");
+          }
+          if (errors.length) {
+            return jsonResponse({ error: errors.join(" ") }, 400);
+          }
+
+          await this.state.storage.put("request", updated);
+          return jsonResponse({ ok: true });
         }
 
-        await this.state.storage.put("request", updated);
-        return jsonResponse({ ok: true });
+        return jsonResponse({ error: "Unsupported request type for update." }, 400);
       }
 
       if (pathname === "/request" && request.method === "DELETE") {
@@ -178,8 +182,14 @@ export class AvailabilityRequest {
         }
 
         // Prevent deletion of confirmed requests
-        if (data.confirmed) {
+        if (isGroupAvailabilityRequest(data) && data.confirmed) {
           return jsonResponse({ error: "Cannot delete: request has been confirmed." }, 409);
+        }
+        if (!isGroupAvailabilityRequest(data)) {
+          const confirmedSlot = await this.state.storage.get<ConfirmedSlot>("confirmed");
+          if (confirmedSlot) {
+            return jsonResponse({ error: "Cannot delete: request has been confirmed." }, 409);
+          }
         }
 
         // For group-availability, delete all group-specific storage keys explicitly
@@ -206,8 +216,8 @@ export class AvailabilityRequest {
         const guestToken = url.searchParams.get("guest") ?? "";
 
         // If guest token is provided and this is a group-availability request, return guest-specific view
-        if (guestToken && data.type === "group-availability") {
-          const guest = data.guests?.find((g) => g.token === guestToken);
+        if (guestToken && isGroupAvailabilityRequest(data)) {
+          const guest = data.guests.find((g) => g.token === guestToken);
           if (!guest) {
             return jsonResponse({ error: "Invalid guest token." }, 403);
           }
@@ -241,8 +251,8 @@ export class AvailabilityRequest {
         return jsonResponse({
           id: data.id,
           hostName: data.hostName,
-          guestName: data.guestName,
-          guestEmail: isAdmin ? data.guestEmail : undefined,
+          guestName: isIndividualRequest(data) ? data.guestName : undefined,
+          guestEmail: isAdmin && isIndividualRequest(data) ? data.guestEmail : undefined,
           hostTimezone: data.hostTimezone,
           allowedDateStart: data.allowedDateStart,
           allowedDateEnd: data.allowedDateEnd,
@@ -251,7 +261,7 @@ export class AvailabilityRequest {
           hasSubmission: Boolean(submission),
           isAdmin,
           confirmedSlot: confirmed ?? null,
-          confirmed: data.confirmed,
+          confirmed: isGroupAvailabilityRequest(data) ? data.confirmed : undefined,
         });
       }
 
@@ -297,6 +307,9 @@ export class AvailabilityRequest {
         }
 
         // Individual / group-event: existing behaviour
+        if (!isIndividualRequest(data)) {
+          return jsonResponse({ error: "Export not supported for this request type." }, 400);
+        }
         const submission = await this.state.storage.get<SubmissionData>("submission");
         if (!submission) {
           return jsonResponse({ error: "No submission yet." }, 404);
@@ -305,7 +318,7 @@ export class AvailabilityRequest {
         return new Response(ics, {
           headers: {
             "Content-Type": "text/calendar; charset=utf-8",
-            "Content-Disposition": `attachment; filename="availability-${(data.guestName ?? data.id).replace(/[^a-z0-9]/gi, "-")}.ics"`,
+            "Content-Disposition": `attachment; filename="availability-${data.guestName.replace(/[^a-z0-9]/gi, "-")}.ics"`,
           },
         });
       }
@@ -384,14 +397,14 @@ export class AvailabilityRequest {
           await this.state.storage.put("confirmed", confirmed);
 
           // Mark request as confirmed
-          const updatedData: RequestData = {
+          const updatedData: GroupAvailabilityRequestData = {
             ...data,
             confirmed: true,
           };
           await this.state.storage.put("request", updatedData);
 
           // Send confirmation emails to all guests (if enabled)
-          if (this.env.EMAIL_CONFIRM_ENABLED === 'true' && data.guests) {
+          if (this.env.EMAIL_CONFIRM_ENABLED === 'true') {
             for (const guest of data.guests) {
               const guestSubmission = submissions.find((s) => s.guestToken === guest.token);
               const guestTimezone = guestSubmission?.guestTimezone || 'UTC';
@@ -419,7 +432,7 @@ export class AvailabilityRequest {
         }
 
         // Handle individual requests (legacy behavior)
-        if (!data.guestName || !data.guestEmail) {
+        if (!isIndividualRequest(data)) {
           return jsonResponse({ error: "Invalid request type for confirmation." }, 400);
         }
         
@@ -472,10 +485,12 @@ export class AvailabilityRequest {
         this.broadcastToAdmins({
           type: "submission",
           action: existing ? "updated" : "new",
-          guestName: data.guestName,
+          guestName: isIndividualRequest(data) ? data.guestName : undefined,
           submittedAt: payload.submittedAt,
         });
-        await notifyHost(this.env, data, payload).catch(() => undefined);
+        if (isIndividualRequest(data)) {
+          await notifyHost(this.env, data, payload).catch(() => undefined);
+        }
         return jsonResponse({ ok: true });
       }
 

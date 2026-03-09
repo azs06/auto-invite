@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createEnv } from "./test-utils";
-import type { RequestData } from "../src/types";
+import type { GroupAvailabilityRequestData } from "../src/types";
 
 const origin = "http://localhost:8787";
 
@@ -15,7 +15,7 @@ describe("WebSocket Notifications for Group Availability", () => {
   it("broadcasts guest-submission notification when guest submits availability", async () => {
     const obj = namespace.getObject("req-ws-1");
 
-    const requestData: RequestData = {
+    const requestData: GroupAvailabilityRequestData = {
       id: "req-ws-1",
       adminToken: "admin-token-ws-1",
       hostName: "Alice",
@@ -30,6 +30,7 @@ describe("WebSocket Notifications for Group Availability", () => {
         { token: "guest-bbb", name: "Carol", email: "carol@example.com", invitedAt: new Date().toISOString() },
         { token: "guest-ccc", name: "Dave", email: "dave@example.com", invitedAt: new Date().toISOString() },
       ],
+      participationThreshold: 3,
       confirmed: false,
     };
 
@@ -73,7 +74,7 @@ describe("WebSocket Notifications for Group Availability", () => {
   it("includes guest name and token in notifications per requirements 9.2, 9.3, 9.4", async () => {
     const obj = namespace.getObject("req-ws-2");
 
-    const requestData: RequestData = {
+    const requestData: GroupAvailabilityRequestData = {
       id: "req-ws-2",
       adminToken: "admin-token-ws-2",
       hostName: "Alice",
@@ -88,6 +89,7 @@ describe("WebSocket Notifications for Group Availability", () => {
         { token: "guest-req-2", name: "Oscar", email: "oscar@example.com", invitedAt: new Date().toISOString() },
         { token: "guest-req-3", name: "Paul", email: "paul@example.com", invitedAt: new Date().toISOString() },
       ],
+      participationThreshold: 3,
       confirmed: false,
     };
 

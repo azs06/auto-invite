@@ -2343,8 +2343,16 @@ describe("DELETE /request - confirmed request prevention (task 12.2)", () => {
   it("rejects deletion of a confirmed individual request with 409", async () => {
     const { namespace } = createEnv();
     const obj = namespace.getObject("req-individual-confirmed");
-    const requestData = buildRequestData({ confirmed: true });
+    const requestData = buildRequestData();
     await obj.fetch(jsonRequest(`${origin}/request`, "POST", requestData));
+
+    // Confirm the request via the confirm endpoint
+    await obj.fetch(
+      jsonRequest(`${origin}/confirm?admin=${requestData.adminToken}`, "POST", {
+        startUtc: "2024-01-01T10:00:00Z",
+        endUtc: "2024-01-01T11:00:00Z",
+      })
+    );
 
     const response = await obj.fetch(
       new Request(`${origin}/request?admin=${requestData.adminToken}`, { method: "DELETE" })

@@ -1,4 +1,5 @@
-import type { Env, AllowedWindow, RequestData, SubmissionData, GuestInfo } from "./types";
+import type { Env, AllowedWindow, RequestData, IndividualRequestData, GroupEventRequestData, GroupAvailabilityRequestData, SubmissionData } from "./types";
+import { EMAIL_REGEX } from "./types";
 import { readJson, jsonResponse, normalizeTimeWindows, validateTimeWindows, isDateString, randomToken, proxyToDurableObject, escapeHtml, isValidTimezone } from "./utils";
 import { sendInviteEmail } from "./email";
 
@@ -68,24 +69,36 @@ export async function handleCreateRequest(request: Request, env: Env, origin: st
 
   const id = randomToken();
   const adminToken = randomToken(24);
-  const requestData: RequestData = {
-    id,
-    adminToken,
-    hostName,
-    guestName,
-    guestEmail,
-    hostTimezone,
-    allowedDateStart,
-    allowedDateEnd,
-    allowedTimeWindows,
-    createdAt: new Date().toISOString(),
-    type: requestType,
-    ...(isGroup && {
-      eventTitle: (body.eventTitle ?? "").trim(),
-      slotDurationMinutes: body.slotDurationMinutes,
-      bufferMinutes: body.bufferMinutes ?? 0,
-    }),
-  };
+  const createdAt = new Date().toISOString();
+
+  const requestData: RequestData = isGroup
+    ? {
+        id,
+        adminToken,
+        hostName,
+        hostTimezone,
+        allowedDateStart,
+        allowedDateEnd,
+        allowedTimeWindows,
+        createdAt,
+        type: "group",
+        eventTitle: (body.eventTitle ?? "").trim(),
+        slotDurationMinutes: body.slotDurationMinutes!,
+        bufferMinutes: body.bufferMinutes ?? 0,
+      }
+    : {
+        id,
+        adminToken,
+        hostName,
+        guestName,
+        guestEmail,
+        hostTimezone,
+        allowedDateStart,
+        allowedDateEnd,
+        allowedTimeWindows,
+        createdAt,
+        type: "individual",
+      };
 
   const stub = env.AVAILABILITY.get(env.AVAILABILITY.idFromName(id));
   const response = await stub.fetch("https://do/request", {
@@ -235,7 +248,6 @@ export async function handleCreateGroupRequest(request: Request, env: Env, origi
 
   // Validate guest data and email uniqueness
   const emailSet = new Set<string>();
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   for (const guest of guests) {
     const name = (guest.name ?? "").trim();
@@ -247,7 +259,7 @@ export async function handleCreateGroupRequest(request: Request, env: Env, origi
     }
 
     // Validate email format (Requirement 13.6)
-    if (!email || !emailRegex.test(email)) {
+    if (!email || !EMAIL_REGEX.test(email)) {
       errors.push(`Invalid email format: ${guest.email || "(empty)"}`);
       break;
     }
@@ -279,7 +291,7 @@ export async function handleCreateGroupRequest(request: Request, env: Env, origi
   }));
 
   // Create request data (Requirement 1.5)
-  const requestData: RequestData = {
+  const requestData: GroupAvailabilityRequestData = {
     id,
     adminToken,
     hostName,

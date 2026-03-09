@@ -47,31 +47,6 @@ export type AggregatedAvailability = {
   maxParticipation: number;
 };
 
-export type RequestData = {
-  id: string;
-  adminToken: string;
-  hostName: string;
-  hostTimezone: string;
-  allowedDateStart: string;
-  allowedDateEnd: string;
-  allowedTimeWindows: AllowedWindow[];
-  createdAt: string;
-  type?: "individual" | "group" | "group-availability";
-  
-  // Legacy fields for individual and group types
-  guestName?: string;
-  guestEmail?: string;
-  eventTitle?: string;
-  slotDurationMinutes?: number;
-  bufferMinutes?: number;
-  
-  // Group availability specific fields
-  guests?: GuestInfo[];
-  participationThreshold?: number;
-  confirmed?: boolean;
-  hostEmail?: string;
-};
-
 export type SubmissionData = {
   availability: { startUtc: string; endUtc: string }[];
   guestTimezone: string;
@@ -106,19 +81,65 @@ export type GeneratedSlot = {
   endUtc: string;
 };
 
-// Type guards for distinguishing request types
-export function isGroupAvailabilityRequest(request: RequestData): boolean {
-  return request.type === "group-availability" && Array.isArray(request.guests);
+/** Shared email validation regex */
+export const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// ── Discriminated union for RequestData ──
+
+type BaseRequestData = {
+  id: string;
+  adminToken: string;
+  hostName: string;
+  hostTimezone: string;
+  allowedDateStart: string;
+  allowedDateEnd: string;
+  allowedTimeWindows: AllowedWindow[];
+  createdAt: string;
+};
+
+export type IndividualRequestData = BaseRequestData & {
+  type?: "individual";
+  guestName: string;
+  guestEmail: string;
+};
+
+export type GroupEventRequestData = BaseRequestData & {
+  type: "group";
+  eventTitle: string;
+  slotDurationMinutes: number;
+  bufferMinutes: number;
+  guestName?: string;
+  guestEmail?: string;
+};
+
+export type GroupAvailabilityRequestData = BaseRequestData & {
+  type: "group-availability";
+  guests: GuestInfo[];
+  participationThreshold: number;
+  confirmed?: boolean;
+  hostEmail?: string;
+};
+
+export type RequestData =
+  | IndividualRequestData
+  | GroupEventRequestData
+  | GroupAvailabilityRequestData;
+
+// Type guards with proper narrowing predicates
+export function isGroupAvailabilityRequest(
+  request: RequestData
+): request is GroupAvailabilityRequestData {
+  return request.type === "group-availability";
 }
 
-export function isIndividualRequest(request: RequestData): boolean {
-  return (request.type === "individual" || !request.type) && 
-         typeof request.guestName === "string" && 
-         typeof request.guestEmail === "string";
+export function isIndividualRequest(
+  request: RequestData
+): request is IndividualRequestData {
+  return request.type === "individual" || !request.type;
 }
 
-export function isGroupEventRequest(request: RequestData): boolean {
-  return request.type === "group" && 
-         typeof request.eventTitle === "string" &&
-         typeof request.slotDurationMinutes === "number";
+export function isGroupEventRequest(
+  request: RequestData
+): request is GroupEventRequestData {
+  return request.type === "group";
 }

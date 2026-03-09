@@ -1,4 +1,4 @@
-import type { Env, AllowedWindow, RequestData, SubmissionData, GeneratedSlot, GuestSubmission, TimeSlot, AggregatedAvailability, GuestInfo, GroupSubmissionsData, ConfirmedSlot } from "./types";
+import type { Env, AllowedWindow, RequestData, IndividualRequestData, GroupEventRequestData, GroupAvailabilityRequestData, SubmissionData, GeneratedSlot, GuestSubmission, TimeSlot, AggregatedAvailability, GuestInfo, GroupSubmissionsData, ConfirmedSlot } from "./types";
 
 export async function proxyToDurableObject(
   stub: DurableObjectStub,
@@ -111,7 +111,7 @@ function zonedTimeToUtcServer(dateStr: string, timeStr: string, timeZone: string
   return new Date(utcGuess.getTime() - offset * 60000);
 }
 
-export function generateSlots(data: RequestData): GeneratedSlot[] {
+export function generateSlots(data: GroupEventRequestData): GeneratedSlot[] {
   const { allowedDateStart, allowedDateEnd, allowedTimeWindows, hostTimezone,
     slotDurationMinutes = 60, bufferMinutes = 0 } = data;
 
@@ -173,7 +173,7 @@ export function generateGuestToken() {
   return `guest_${randomToken(16)}`;
 }
 
-export function generateICS(request: RequestData, submission: SubmissionData): string {
+export function generateICS(request: IndividualRequestData, submission: SubmissionData): string {
   const formatICSDate = (isoString: string) => {
     return isoString.replace(/[-:]/g, "").replace(/\.\d{3}/, "");
   };
@@ -226,7 +226,7 @@ export function generateICS(request: RequestData, submission: SubmissionData): s
   return calendar;
 }
 
-export async function notifyHost(env: Env, request: RequestData, submission: SubmissionData) {
+export async function notifyHost(env: Env, request: IndividualRequestData, submission: SubmissionData) {
   if (!env.NOTIFY_WEBHOOK_URL) return;
   await fetch(env.NOTIFY_WEBHOOK_URL, {
     method: "POST",
@@ -577,7 +577,7 @@ export function aggregateAvailability(
  * Validates: Requirements 10.1, 10.2, 10.3, 10.4, 10.5
  */
 export function generateGroupICS(
-  request: RequestData,
+  request: GroupAvailabilityRequestData,
   submissionsData: GroupSubmissionsData,
   confirmedSlot: ConfirmedSlot | null
 ): string {
@@ -587,7 +587,7 @@ export function generateGroupICS(
   const escapeICS = (text: string) =>
     text.replace(/[\\;,\n]/g, (match) => (match === "\n" ? "\\n" : "\\" + match));
 
-  const guests: GuestInfo[] = request.guests ?? [];
+  const guests: GuestInfo[] = request.guests;
   const guestByToken = new Map(guests.map((g) => [g.token, g]));
 
   const events: string[] = [];
