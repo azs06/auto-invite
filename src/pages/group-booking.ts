@@ -431,7 +431,7 @@ export function renderGroupBookingPage() {
         const { request, slots, totalSlots, bookedCount } = data;
         allSlotsData = data;
 
-        pageTitle.textContent = (request.eventTitle || "Group Booking") + " — Admin";
+        pageTitle.textContent = (request.eventTitle || "Group Event") + " — Admin";
         pageSubtitle.textContent = "Manage bookings and view schedule";
 
         // Share link

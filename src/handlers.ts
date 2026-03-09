@@ -1,5 +1,6 @@
-import type { Env, AllowedWindow, RequestData, SubmissionData } from "./types";
-import { readJson, jsonResponse, normalizeTimeWindows, validateTimeWindows, isDateString, randomToken, proxyToDurableObject } from "./utils";
+import type { Env, AllowedWindow, RequestData, IndividualRequestData, GroupEventRequestData, GroupAvailabilityRequestData, SubmissionData } from "./types";
+import { EMAIL_REGEX } from "./types";
+import { readJson, jsonResponse, normalizeTimeWindows, validateTimeWindows, isDateString, randomToken, proxyToDurableObject, escapeHtml, isValidTimezone } from "./utils";
 import { sendInviteEmail } from "./email";
 
 export async function handleCreateRequest(request: Request, env: Env, origin: string) {
@@ -68,24 +69,36 @@ export async function handleCreateRequest(request: Request, env: Env, origin: st
 
   const id = randomToken();
   const adminToken = randomToken(24);
-  const requestData: RequestData = {
-    id,
-    adminToken,
-    hostName,
-    guestName,
-    guestEmail,
-    hostTimezone,
-    allowedDateStart,
-    allowedDateEnd,
-    allowedTimeWindows,
-    createdAt: new Date().toISOString(),
-    type: requestType,
-    ...(isGroup && {
-      eventTitle: (body.eventTitle ?? "").trim(),
-      slotDurationMinutes: body.slotDurationMinutes,
-      bufferMinutes: body.bufferMinutes ?? 0,
-    }),
-  };
+  const createdAt = new Date().toISOString();
+
+  const requestData: RequestData = isGroup
+    ? {
+        id,
+        adminToken,
+        hostName,
+        hostTimezone,
+        allowedDateStart,
+        allowedDateEnd,
+        allowedTimeWindows,
+        createdAt,
+        type: "group",
+        eventTitle: (body.eventTitle ?? "").trim(),
+        slotDurationMinutes: body.slotDurationMinutes!,
+        bufferMinutes: body.bufferMinutes ?? 0,
+      }
+    : {
+        id,
+        adminToken,
+        hostName,
+        guestName,
+        guestEmail,
+        hostTimezone,
+        allowedDateStart,
+        allowedDateEnd,
+        allowedTimeWindows,
+        createdAt,
+        type: "individual",
+      };
 
   const stub = env.AVAILABILITY.get(env.AVAILABILITY.idFromName(id));
   const response = await stub.fetch("https://do/request", {
@@ -169,4 +182,153 @@ export async function handleSubmitAvailability(request: Request, stub: DurableOb
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   }));
+}
+export async function handleCreateGroupRequest(request: Request, env: Env, origin: string) {
+  const body = await readJson<{
+    hostName?: string;
+    hostEmail?: string;
+    hostTimezone?: string;
+    guests?: { name: string; email: string }[];
+    allowedDateStart?: string;
+    allowedDateEnd?: string;
+    allowedTimeWindows?: AllowedWindow[];
+    participationThreshold?: number;
+  }>(request);
+
+  if (!body) {
+    return jsonResponse({ error: "Invalid JSON." }, 400);
+  }
+
+  const hostName = escapeHtml((body.hostName ?? "").trim());
+  const hostEmail = (body.hostEmail ?? "").trim().toLowerCase();
+  const hostTimezone = (body.hostTimezone ?? "").trim();
+  const allowedDateStart = (body.allowedDateStart ?? "").trim();
+  const allowedDateEnd = (body.allowedDateEnd ?? "").trim();
+  const allowedTimeWindows = normalizeTimeWindows(body.allowedTimeWindows ?? []);
+  const guests = body.guests ?? [];
+
+  const errors: string[] = [];
+
+  // Validate required fields
+  if (!hostName) errors.push("Host name is required.");
+  if (!hostTimezone) errors.push("Host timezone is required.");
+  if (hostTimezone && !isValidTimezone(hostTimezone)) errors.push(`Invalid timezone identifier: ${hostTimezone}`);
+  if (!isDateString(allowedDateStart)) errors.push("Valid start date is required.");
+  if (!isDateString(allowedDateEnd)) errors.push("Valid end date is required.");
+
+  // Validate date range
+  if (allowedDateStart && allowedDateEnd && allowedDateStart > allowedDateEnd) {
+    errors.push("Start date must be on or before end date.");
+  }
+
+  // Validate date range does not exceed 60 days (Requirement 1.6)
+  if (allowedDateStart && allowedDateEnd) {
+    const start = new Date(allowedDateStart);
+    const end = new Date(allowedDateEnd);
+    const diffDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays > 60) {
+      errors.push("Date range cannot exceed 60 days.");
+    }
+  }
+
+  // Validate time windows (Requirement 1.7)
+  if (!validateTimeWindows(allowedTimeWindows)) {
+    errors.push("Time windows must be valid and ordered.");
+  }
+
+  // Validate minimum guest count (Requirement 1.1)
+  if (!Array.isArray(guests) || guests.length < 3) {
+    errors.push("Minimum 3 guests required for group availability requests.");
+  }
+
+  // Validate maximum guest count (Requirement 14.5)
+  if (guests.length > 50) {
+    errors.push("Maximum 50 guests allowed per request.");
+  }
+
+  // Validate guest data and email uniqueness
+  const emailSet = new Set<string>();
+
+  for (const guest of guests) {
+    const name = (guest.name ?? "").trim();
+    const email = (guest.email ?? "").trim().toLowerCase();
+
+    if (!name) {
+      errors.push("All guest names are required.");
+      break;
+    }
+
+    // Validate email format (Requirement 13.6)
+    if (!email || !EMAIL_REGEX.test(email)) {
+      errors.push(`Invalid email format: ${guest.email || "(empty)"}`);
+      break;
+    }
+
+    // Check for duplicate emails
+    if (emailSet.has(email)) {
+      errors.push(`Duplicate email address: ${email}`);
+      break;
+    }
+
+    emailSet.add(email);
+  }
+
+  if (errors.length) {
+    return jsonResponse({ error: errors.join(" ") }, 400);
+  }
+
+  // Generate tokens (Requirements 1.3, 1.4, 2.1)
+  const id = randomToken();
+  const adminToken = randomToken(24);
+  const invitedAt = new Date().toISOString();
+
+  // Generate unique guest tokens and build GuestInfo array
+  const guestInfos = guests.map((guest) => ({
+    token: randomToken(16),
+    name: escapeHtml(guest.name.trim()),
+    email: guest.email.trim().toLowerCase(),
+    invitedAt,
+  }));
+
+  // Create request data (Requirement 1.5)
+  const requestData: GroupAvailabilityRequestData = {
+    id,
+    adminToken,
+    hostName,
+    hostTimezone,
+    allowedDateStart,
+    allowedDateEnd,
+    allowedTimeWindows,
+    createdAt: invitedAt,
+    type: "group-availability",
+    guests: guestInfos,
+    participationThreshold: body.participationThreshold ?? guests.length,
+    confirmed: false,
+    ...(hostEmail ? { hostEmail } : {}),
+  };
+
+  // Store in Durable Object
+  const stub = env.AVAILABILITY.get(env.AVAILABILITY.idFromName(id));
+  const response = await stub.fetch("https://do/request", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(requestData),
+  });
+
+  if (!response.ok) {
+    return response;
+  }
+
+  // Generate guest URLs (Requirement 1.4)
+  const guestUrls = guestInfos.map((guest) => ({
+    name: guest.name,
+    email: guest.email,
+    url: `${origin}/ga/${id}?guest=${guest.token}`,
+  }));
+
+  return jsonResponse({
+    requestId: id,
+    adminUrl: `${origin}/ga/${id}?admin=${adminToken}`,
+    guestUrls,
+  });
 }

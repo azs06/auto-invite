@@ -1,43 +1,78 @@
 import { sharedStyles } from "./shared-styles";
 
-export function renderNewGroupPage() {
+export function renderNewGroupAvailabilityPage() {
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Auto Invite - Create Group Booking</title>
-    <meta name="description" content="Create a group slot booking for multiple guests" />
+    <title>Auto Invite - Group Availability Request</title>
+    <meta name="description" content="Collect availability from multiple guests to find the best meeting time" />
     ${sharedStyles()}
+    <style>
+      .guest-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+      .guest-row input {
+        flex: 1;
+        min-width: 140px;
+      }
+      .guest-count {
+        font-size: 0.85rem;
+        color: var(--ink-muted);
+      }
+      .guest-count.error {
+        color: var(--error);
+      }
+      .guest-urls {
+        display: grid;
+        gap: 0.75rem;
+      }
+      .guest-url-card {
+        background: var(--bg-elevated);
+        border: 1px solid var(--line);
+        border-radius: 0.75rem;
+        padding: 0.75rem 1rem;
+      }
+      .guest-url-card .guest-url-name {
+        font-weight: 600;
+        font-size: 0.9rem;
+        color: var(--ink);
+        margin-bottom: 0.25rem;
+      }
+      .guest-url-card .guest-url-email {
+        font-size: 0.8rem;
+        color: var(--ink-muted);
+        margin-bottom: 0.5rem;
+      }
+    </style>
   </head>
   <body>
     <main class="shell">
       <header class="hero">
         <a href="/new" class="eyebrow" style="text-decoration:none;">Auto Invite</a>
-        <h1>Create a group booking</h1>
-        <p class="subhead">Define time slots for a group event. Share one link and let people self-book.</p>
+        <h1>Group availability request</h1>
+        <p class="subhead">Collect availability from multiple guests to find the best meeting time for everyone.</p>
       </header>
 
       <form id="group-form" class="panel">
         <div class="panel-header">
-          <h2>Event Details</h2>
+          <h2>Request Details</h2>
         </div>
 
         <div class="form-section">
-          <label>
-            Event title
-            <input name="eventTitle" required placeholder="e.g. Team Standup" id="event-title-input" />
-          </label>
-        </div>
-
-        <div class="form-section">
-          <div class="panel subtle compact">
-            <div class="panel-header">
-              <h3>Hosts</h3>
-              <button class="secondary" type="button" id="add-host">Add host</button>
-            </div>
-            <div id="hosts" class="stack"></div>
-            <p class="hint">Add all people who will be hosting the meetings.</p>
+          <div class="grid two">
+            <label>
+              Your name
+              <input name="hostName" required placeholder="Enter your name" autocomplete="name" />
+            </label>
+            <label>
+              Your email <span class="muted" style="text-transform:none;letter-spacing:0;">(optional)</span>
+              <input name="hostEmail" type="email" placeholder="you@example.com" autocomplete="email" />
+            </label>
           </div>
         </div>
 
@@ -65,39 +100,29 @@ export function renderNewGroupPage() {
               <button class="secondary" type="button" id="add-window">Add window</button>
             </div>
             <div id="windows" class="stack"></div>
-            <p class="hint">Define when slots are available in your timezone.</p>
+            <p class="hint">Define when guests can mark availability in your timezone.</p>
           </div>
         </div>
 
         <div class="form-section">
-          <div class="grid two">
-            <label>
-              Slot duration
-              <select name="slotDurationMinutes" required>
-                <option value="30">30 minutes</option>
-                <option value="45">45 minutes</option>
-                <option value="60" selected>1 hour</option>
-                <option value="90">90 minutes</option>
-                <option value="120">2 hours</option>
-              </select>
-            </label>
-            <label>
-              Buffer between slots
-              <select name="bufferMinutes">
-                <option value="0" selected>None</option>
-                <option value="5">5 minutes</option>
-                <option value="10">10 minutes</option>
-                <option value="15">15 minutes</option>
-              </select>
-            </label>
+          <div class="panel subtle compact">
+            <div class="panel-header">
+              <h3>Guests</h3>
+              <div style="display:flex;align-items:center;gap:0.75rem;">
+                <span id="guest-count" class="guest-count">0 guests</span>
+                <button class="secondary" type="button" id="add-guest">Add guest</button>
+              </div>
+            </div>
+            <div id="guests" class="stack"></div>
+            <p class="hint">Minimum 3 guests, maximum 50. Each receives a unique link.</p>
           </div>
         </div>
 
         <div id="request-error" class="message error hidden"></div>
-        <button class="primary" type="submit">Create Group Booking</button>
+        <button class="primary" type="submit" id="submit-btn">Create Group Request</button>
         <p style="text-align: center; margin-top: 1rem; color: var(--ink-muted); font-size: 0.85rem;">
-          Need individual invites? <a href="/new">Create an individual request</a>
-          &middot; Need to collect availability? <a href="/new/group-availability">Group availability request</a>
+          Only need one guest? <a href="/new">Create an individual request</a>
+          &middot; Need slot booking? <a href="/new/group">Create a group booking</a>
         </p>
       </form>
 
@@ -107,21 +132,7 @@ export function renderNewGroupPage() {
         </div>
         <div class="stack">
           <div class="card">
-            <p class="label">Guest booking link</p>
-            <div class="copy-row">
-              <a id="guest-link" target="_blank" rel="noreferrer"></a>
-              <button type="button" class="copy-btn" data-copy="guest-link" title="Copy to clipboard">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
-                <span>Copy</span>
-              </button>
-            </div>
-            <p class="hint">Share this with your group</p>
-          </div>
-          <div class="card">
-            <p class="label">Admin dashboard link</p>
+            <p class="label">Admin dashboard</p>
             <div class="copy-row">
               <a id="admin-link" target="_blank" rel="noreferrer"></a>
               <button type="button" class="copy-btn" data-copy="admin-link" title="Copy to clipboard">
@@ -132,7 +143,12 @@ export function renderNewGroupPage() {
                 <span>Copy</span>
               </button>
             </div>
-            <p class="hint">Keep this link to manage bookings</p>
+            <p class="hint">Keep this link to manage the request and view results</p>
+          </div>
+          <div class="card">
+            <p class="label">Guest links</p>
+            <p class="hint" style="margin-bottom: 0.75rem;">Share each guest's unique link with them</p>
+            <div id="guest-urls" class="guest-urls"></div>
           </div>
         </div>
       </section>
@@ -141,44 +157,48 @@ export function renderNewGroupPage() {
     <script type="module">
       const form = document.getElementById("group-form");
       const hostTimezone = document.getElementById("host-timezone");
-      const hostsContainer = document.getElementById("hosts");
-      const addHostButton = document.getElementById("add-host");
+      const guestsContainer = document.getElementById("guests");
+      const addGuestButton = document.getElementById("add-guest");
+      const guestCountEl = document.getElementById("guest-count");
       const windowsContainer = document.getElementById("windows");
       const addWindowButton = document.getElementById("add-window");
       const linksSection = document.getElementById("links");
-      const guestLink = document.getElementById("guest-link");
       const adminLink = document.getElementById("admin-link");
+      const guestUrlsContainer = document.getElementById("guest-urls");
       const requestError = document.getElementById("request-error");
       const dateStartInput = form.querySelector('input[name="allowedDateStart"]');
       const dateEndInput = form.querySelector('input[name="allowedDateEnd"]');
 
       hostTimezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
-      const placeholders = [
-        "e.g. Team Standup",
-        "e.g. 1:1 with Manager",
-        "e.g. Design Review",
-        "e.g. Sprint Planning",
-        "e.g. Coffee Chat",
-      ];
-      document.getElementById("event-title-input").placeholder =
-        placeholders[Math.floor(Math.random() * placeholders.length)];
+      function updateGuestCount() {
+        const count = guestsContainer.children.length;
+        guestCountEl.textContent = count + (count === 1 ? " guest" : " guests");
+        guestCountEl.className = count < 3 ? "guest-count error" : "guest-count";
+      }
 
-      function addHostRow(name = "") {
+      function addGuestRow(name = "", email = "") {
         const row = document.createElement("div");
-        row.className = "row";
+        row.className = "guest-row";
         row.innerHTML = \`
-          <input type="text" class="host-name" value="\${name}" placeholder="Enter host name" autocomplete="name" style="flex:1" />
+          <input type="text" class="guest-name" value="\${name}" placeholder="Guest name" autocomplete="off" required />
+          <input type="email" class="guest-email" value="\${email}" placeholder="guest@example.com" autocomplete="off" required />
           <button type="button" class="ghost danger">Remove</button>
         \`;
         row.querySelector("button").addEventListener("click", () => {
-          if (hostsContainer.children.length > 1) row.remove();
+          row.remove();
+          updateGuestCount();
         });
-        hostsContainer.appendChild(row);
+        guestsContainer.appendChild(row);
+        updateGuestCount();
       }
 
-      addHostButton.addEventListener("click", () => addHostRow());
-      addHostRow(); // start with one host row
+      addGuestButton.addEventListener("click", () => addGuestRow());
+
+      // Start with 3 empty guest rows
+      addGuestRow();
+      addGuestRow();
+      addGuestRow();
 
       function showError(message) {
         requestError.textContent = message;
@@ -230,31 +250,41 @@ export function renderNewGroupPage() {
           })
           .filter((w) => w.startTime && w.endTime);
 
-        const hostNames = Array.from(hostsContainer.querySelectorAll(".host-name"))
-          .map((input) => input.value.trim())
-          .filter(Boolean);
-        if (!hostNames.length) {
-          showError("At least one host name is required.");
+        const guestRows = Array.from(guestsContainer.querySelectorAll(".guest-row"));
+        const guests = guestRows
+          .map((row) => ({
+            name: row.querySelector(".guest-name").value.trim(),
+            email: row.querySelector(".guest-email").value.trim(),
+          }))
+          .filter((g) => g.name && g.email);
+
+        if (guests.length < 3) {
+          showError("Minimum 3 guests with name and email are required.");
           return;
         }
 
         const payload = {
-          type: "group",
-          eventTitle: formData.get("eventTitle"),
-          hostName: hostNames.join(", "),
+          hostName: formData.get("hostName"),
+          hostEmail: formData.get("hostEmail") || undefined,
           hostTimezone: formData.get("hostTimezone"),
           allowedDateStart: formData.get("allowedDateStart"),
           allowedDateEnd: formData.get("allowedDateEnd"),
           allowedTimeWindows,
-          slotDurationMinutes: Number(formData.get("slotDurationMinutes")),
-          bufferMinutes: Number(formData.get("bufferMinutes")),
+          guests,
         };
 
-        const response = await fetch("/api/request", {
+        const submitBtn = document.getElementById("submit-btn");
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Creating...";
+
+        const response = await fetch("/api/group-request", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(payload),
         });
+
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Create Group Request";
 
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));
@@ -263,18 +293,49 @@ export function renderNewGroupPage() {
         }
 
         const data = await response.json();
-        guestLink.textContent = data.guestUrl;
-        guestLink.href = data.guestUrl;
         adminLink.textContent = data.adminUrl;
         adminLink.href = data.adminUrl;
+
+        // Render per-guest URLs
+        guestUrlsContainer.innerHTML = "";
+        (data.guestUrls || []).forEach((guest) => {
+          const card = document.createElement("div");
+          card.className = "guest-url-card";
+          card.innerHTML = \`
+            <div class="guest-url-name">\${guest.name}</div>
+            <div class="guest-url-email">\${guest.email}</div>
+            <div class="copy-row">
+              <a href="\${guest.url}" target="_blank" rel="noreferrer" style="font-size:0.85rem;">\${guest.url}</a>
+              <button type="button" class="copy-btn" title="Copy to clipboard">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+                <span>Copy</span>
+              </button>
+            </div>
+          \`;
+          card.querySelector(".copy-btn").addEventListener("click", async (e) => {
+            const btn = e.currentTarget;
+            try {
+              await navigator.clipboard.writeText(guest.url);
+              btn.querySelector("span").textContent = "Copied!";
+              setTimeout(() => { btn.querySelector("span").textContent = "Copy"; }, 2000);
+            } catch (err) { console.error("Copy failed:", err); }
+          });
+          guestUrlsContainer.appendChild(card);
+        });
+
+        form.classList.add("hidden");
         linksSection.classList.remove("hidden");
         linksSection.scrollIntoView({ behavior: "smooth", block: "start" });
       });
 
-      // Copy to clipboard
+      // Copy to clipboard for admin link
       document.querySelectorAll(".copy-btn").forEach((btn) => {
         btn.addEventListener("click", async () => {
           const targetId = btn.dataset.copy;
+          if (!targetId) return;
           const targetEl = document.getElementById(targetId);
           const text = targetEl?.href || targetEl?.textContent || "";
           try {

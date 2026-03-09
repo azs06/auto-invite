@@ -76,7 +76,8 @@ export function renderNewPage() {
         <div id="request-error" class="message error hidden"></div>
         <button class="primary" type="submit">Generate Invite Link</button>
         <p style="text-align: center; margin-top: 1rem; color: var(--ink-muted); font-size: 0.85rem;">
-          Need to schedule with multiple people? <a href="/new/group">Create a group booking</a>
+          Need slot booking? <a href="/new/group">Group booking</a>
+          &middot; Need to collect availability? <a href="/new/group-availability">Group availability request</a>
         </p>
       </form>
 
