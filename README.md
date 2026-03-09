@@ -2,7 +2,7 @@
 
 Collect guest availability across timezones. Hosts create booking requests with date/time constraints, guests pick a slot, and hosts review everything from an admin dashboard.
 
-![Create a group booking](screenshots/02-new-group.png)
+![Create a group event](screenshots/02-new-group.png)
 
 ![Guest booking page](screenshots/04-guest-booking.png)
 
@@ -16,7 +16,7 @@ Collect guest availability across timezones. Hosts create booking requests with 
 
 ### Group slot booking
 
-1. Go to `/new/group` to create a group booking with an event title, hosts, date range, time windows, and slot duration
+1. Go to `/new/group` to create a group event with an event title, hosts, date range, time windows, and slot duration
 2. Share the guest link — guests pick an available slot and enter their name and email to book it
 3. Use the admin link for a live dashboard with booking stats, a schedule grid, and a table of all bookings
 

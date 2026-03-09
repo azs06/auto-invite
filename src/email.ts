@@ -334,3 +334,100 @@ export async function sendConfirmationEmail(env: Env, params: {
     }],
   });
 }
+
+export function renderGroupGuestSubmissionEmail(params: {
+  hostName: string;
+  guestName: string;
+  requestId: string;
+  adminUrl: string;
+  submittedAt: string;
+  isUpdate: boolean;
+}): string {
+  const action = params.isUpdate ? 'updated their availability' : 'submitted their availability';
+  const formattedTime = new Date(params.submittedAt).toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+    timeZone: 'UTC',
+  });
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #0d1117; color: #c9d1d9;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #0d1117; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 500px; background-color: #161b22; border-radius: 12px; border: 1px solid #30363d;">
+          <tr>
+            <td style="padding: 32px;">
+              <p style="color: #d4a855; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 8px 0;">Auto Invite</p>
+              <h1 style="margin: 0 0 24px 0; color: #c9d1d9; font-size: 22px; font-weight: 600;">New availability submission</h1>
+
+              <p style="color: #8b949e; line-height: 1.6; margin: 0 0 20px 0;">
+                <strong style="color: #c9d1d9;">${escapeHtml(params.guestName)}</strong> has ${action} for your group availability request.
+              </p>
+
+              <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #0d1117; border-radius: 8px; margin: 0 0 24px 0; border: 1px solid #30363d;">
+                <tr>
+                  <td style="padding: 12px 16px; border-bottom: 1px solid #30363d;">
+                    <p style="margin: 0 0 4px 0; font-size: 12px; color: #8b949e; text-transform: uppercase;">Guest</p>
+                    <p style="margin: 0; color: #c9d1d9;">${escapeHtml(params.guestName)}</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 12px 16px;">
+                    <p style="margin: 0 0 4px 0; font-size: 12px; color: #8b949e; text-transform: uppercase;">Submitted</p>
+                    <p style="margin: 0; color: #c9d1d9;">${escapeHtml(formattedTime)}</p>
+                  </td>
+                </tr>
+              </table>
+
+              <a href="${escapeHtml(params.adminUrl)}" style="display: block; background-color: #d4a855; color: #0d1117; text-decoration: none; padding: 14px 24px; border-radius: 8px; font-weight: 600; text-align: center;">
+                View Admin Dashboard
+              </a>
+            </td>
+          </tr>
+        </table>
+        <p style="color: #6e7681; font-size: 12px; margin-top: 16px;">Sent via Auto Invite</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+export async function sendGroupGuestSubmissionNotification(env: Env, params: {
+  requestId: string;
+  hostName: string;
+  hostEmail: string;
+  guestName: string;
+  adminUrl: string;
+  submittedAt: string;
+  isUpdate: boolean;
+}): Promise<boolean> {
+  if (!params.hostEmail) return false;
+
+  const html = renderGroupGuestSubmissionEmail({
+    hostName: params.hostName,
+    guestName: params.guestName,
+    requestId: params.requestId,
+    adminUrl: params.adminUrl,
+    submittedAt: params.submittedAt,
+    isUpdate: params.isUpdate,
+  });
+
+  const action = params.isUpdate ? 'updated' : 'submitted';
+  return sendEmail(env, {
+    to: params.hostEmail,
+    subject: `${params.guestName} ${action} availability for your group request`,
+    html,
+  });
+}

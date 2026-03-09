@@ -1,12 +1,26 @@
 import type { Env } from "./types";
 import { jsonResponse, htmlResponse, proxyToDurableObject } from "./utils";
-import { handleCreateRequest, handleSubmitAvailability } from "./handlers";
+import { handleCreateRequest, handleSubmitAvailability, handleCreateGroupRequest } from "./handlers";
 import { renderNewPage } from "./pages/new";
 import { renderNewGroupPage } from "./pages/new-group";
+import { renderNewGroupAvailabilityPage } from "./pages/new-group-availability";
 import { renderRequestPage } from "./pages/request";
 import { renderGroupBookingPage } from "./pages/group-booking";
 
 export { AvailabilityRequest } from "./durable-object";
+export { normalizeTimeWindows, validateTimeWindows } from "./utils";
+export {
+  escapeHtml,
+  formatDateRange,
+  formatTimeForEmail,
+  generateConfirmationICS,
+  renderConfirmationEmail,
+  renderInviteEmail,
+  sendConfirmationEmail,
+  sendEmail,
+  sendInviteEmail,
+} from "./email";
+export type { Env } from "./types";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -25,7 +39,15 @@ export default {
       return htmlResponse(renderNewGroupPage());
     }
 
+    if (pathname === "/new/group-availability" && request.method === "GET") {
+      return htmlResponse(renderNewGroupAvailabilityPage());
+    }
+
     if (pathname.startsWith("/r/") && request.method === "GET") {
+      return htmlResponse(renderRequestPage());
+    }
+
+    if (pathname.startsWith("/ga/") && request.method === "GET") {
       return htmlResponse(renderRequestPage());
     }
 
@@ -35,6 +57,10 @@ export default {
 
     if (pathname === "/api/request" && request.method === "POST") {
       return handleCreateRequest(request, env, url.origin);
+    }
+
+    if (pathname === "/api/group-request" && request.method === "POST") {
+      return handleCreateGroupRequest(request, env, url.origin);
     }
 
     if (pathname.startsWith("/api/request/")) {
@@ -90,6 +116,18 @@ export default {
 
       if (extra === "bookings" && request.method === "GET") {
         return proxyToDurableObject(stub, `/bookings${url.search}`, request);
+      }
+
+      if (extra === "guest" && request.method === "GET") {
+        return proxyToDurableObject(stub, `/guest${url.search}`, request);
+      }
+
+      if (extra === "guest-submit" && request.method === "POST") {
+        return proxyToDurableObject(stub, `/guest-submit${url.search}`, request);
+      }
+
+      if (extra === "aggregated" && request.method === "GET") {
+        return proxyToDurableObject(stub, `/aggregated${url.search}`, request);
       }
     }
 

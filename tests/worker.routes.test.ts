@@ -45,6 +45,23 @@ describe("worker routing and handlers", () => {
     expect(body).toContain("Create an availability request");
   });
 
+  it("serves the group availability creation page", async () => {
+    const { env } = createEnv();
+    const response = await worker.fetch(new Request(`${origin}/new/group-availability`), env);
+    const body = await response.text();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(body).toContain("Group availability request");
+  });
+
+  it("serves the request page for /ga/ routes", async () => {
+    const { env } = createEnv();
+    const response = await worker.fetch(new Request(`${origin}/ga/example?guest=token`), env);
+    const body = await response.text();
+    expect(response.status).toBe(200);
+    expect(body).toContain("Share your availability");
+  });
+
   it("serves the request page", async () => {
     const { env } = createEnv();
     const response = await worker.fetch(new Request(`${origin}/r/example`), env);

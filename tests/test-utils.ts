@@ -11,6 +11,10 @@ class MockStorage {
     this.store.set(key, value);
   }
 
+  async delete(key: string): Promise<boolean> {
+    return this.store.delete(key);
+  }
+
   async deleteAll() {
     this.store.clear();
   }

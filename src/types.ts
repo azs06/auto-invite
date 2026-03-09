@@ -14,21 +14,62 @@ export type AllowedWindow = {
   endTime: string;
 };
 
+export type GuestInfo = {
+  token: string;
+  name: string;
+  email: string;
+  invitedAt: string;
+};
+
+export type GuestSubmission = {
+  guestToken: string;
+  availability: { startUtc: string; endUtc: string }[];
+  guestTimezone: string;
+  submittedAt: string;
+  updatedAt?: string;
+};
+
+export type GroupSubmissionsData = {
+  submissions: GuestSubmission[];
+};
+
+export type TimeSlot = {
+  startUtc: string;
+  endUtc: string;
+  participantCount: number;
+  participantTokens: string[];
+};
+
+export type AggregatedAvailability = {
+  slots: TimeSlot[];
+  totalGuests: number;
+  submittedCount: number;
+  maxParticipation: number;
+};
+
 export type RequestData = {
   id: string;
   adminToken: string;
   hostName: string;
-  guestName: string;
-  guestEmail: string;
   hostTimezone: string;
   allowedDateStart: string;
   allowedDateEnd: string;
   allowedTimeWindows: AllowedWindow[];
   createdAt: string;
-  type?: "individual" | "group";
+  type?: "individual" | "group" | "group-availability";
+  
+  // Legacy fields for individual and group types
+  guestName?: string;
+  guestEmail?: string;
   eventTitle?: string;
   slotDurationMinutes?: number;
   bufferMinutes?: number;
+  
+  // Group availability specific fields
+  guests?: GuestInfo[];
+  participationThreshold?: number;
+  confirmed?: boolean;
+  hostEmail?: string;
 };
 
 export type SubmissionData = {
@@ -64,3 +105,20 @@ export type GeneratedSlot = {
   startUtc: string;
   endUtc: string;
 };
+
+// Type guards for distinguishing request types
+export function isGroupAvailabilityRequest(request: RequestData): boolean {
+  return request.type === "group-availability" && Array.isArray(request.guests);
+}
+
+export function isIndividualRequest(request: RequestData): boolean {
+  return (request.type === "individual" || !request.type) && 
+         typeof request.guestName === "string" && 
+         typeof request.guestEmail === "string";
+}
+
+export function isGroupEventRequest(request: RequestData): boolean {
+  return request.type === "group" && 
+         typeof request.eventTitle === "string" &&
+         typeof request.slotDurationMinutes === "number";
+}
